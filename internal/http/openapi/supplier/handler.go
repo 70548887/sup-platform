@@ -3,6 +3,7 @@ package supplier
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -38,7 +39,10 @@ func (h *Handler) GoodsPaging(c *gin.Context) {
 		Status   *int8  `json:"status"`
 		Name     string `json:"name"`
 	}
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ParamError(c, "", "请求参数格式错误")
+		return
+	}
 
 	if req.Page < 1 {
 		req.Page = 1
@@ -122,7 +126,9 @@ func (h *Handler) GoodsShow(c *gin.Context) {
 	// 解析buy_params JSON
 	var buyParams interface{}
 	if g.BuyParams != "" {
-		_ = json.Unmarshal([]byte(g.BuyParams), &buyParams)
+		if err := json.Unmarshal([]byte(g.BuyParams), &buyParams); err != nil {
+			log.Printf("[WARN] supplier GoodsShow: json.Unmarshal buy_params failed, goods_sn=%s, err=%v", g.SerialNumber, err)
+		}
 	}
 	if buyParams == nil {
 		buyParams = []interface{}{}
@@ -131,7 +137,9 @@ func (h *Handler) GoodsShow(c *gin.Context) {
 	// 解析images JSON
 	var imageURLs interface{}
 	if g.Images != "" {
-		_ = json.Unmarshal([]byte(g.Images), &imageURLs)
+		if err := json.Unmarshal([]byte(g.Images), &imageURLs); err != nil {
+			log.Printf("[WARN] supplier GoodsShow: json.Unmarshal images failed, goods_sn=%s, err=%v", g.SerialNumber, err)
+		}
 	}
 	if imageURLs == nil {
 		imageURLs = []interface{}{}
@@ -278,7 +286,10 @@ func (h *Handler) OrderPaging(c *gin.Context) {
 		Status   *int8  `json:"status"`
 		GoodsSN  string `json:"goods_sn"`
 	}
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ParamError(c, "", "请求参数格式错误")
+		return
+	}
 
 	if req.Page < 1 {
 		req.Page = 1
@@ -287,7 +298,7 @@ func (h *Handler) OrderPaging(c *gin.Context) {
 		req.PageSize = 20
 	}
 
-	list, total, err := h.OrderSvc.ListBySupplier(context.Background(), userID, req.Status, req.Page, req.PageSize)
+	list, total, err := h.OrderSvc.ListBySupplier(context.Background(), userID, req.Status, req.GoodsSN, req.Page, req.PageSize)
 	if err != nil {
 		response.Error(c, "获取订单列表失败")
 		return
@@ -304,10 +315,6 @@ func (h *Handler) OrderPaging(c *gin.Context) {
 
 	items := make([]orderItem, 0, len(list))
 	for _, o := range list {
-		// 如果指定了goods_sn筛选
-		if req.GoodsSN != "" && o.GoodsSN != req.GoodsSN {
-			continue
-		}
 		items = append(items, orderItem{
 			OrderSN:   o.OrderSN,
 			GoodsSN:   o.GoodsSN,
@@ -362,9 +369,12 @@ func (h *Handler) OrderShow(c *gin.Context) {
 		Value string
 	}
 	var rows []buyParamRow
-	h.DB.Table("order_buy_params").
+	if err := h.DB.Table("order_buy_params").
 		Where("order_id = ?", ord.ID).
-		Find(&rows)
+		Find(&rows).Error; err != nil {
+		response.Error(c, "获取订单参数失败")
+		return
+	}
 	for _, r := range rows {
 		buyParamsValue[r.Name] = r.Value
 	}

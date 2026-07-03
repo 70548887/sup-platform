@@ -213,8 +213,8 @@ func (s *OrderService) ListByCustomer(ctx context.Context, customerID uint, stat
 }
 
 // ListBySupplier 分页查询供货商订单
-func (s *OrderService) ListBySupplier(ctx context.Context, supplierID uint, status *int8, page, size int) ([]*Order, int64, error) {
-	return s.repo.ListBySupplier(ctx, supplierID, status, page, size)
+func (s *OrderService) ListBySupplier(ctx context.Context, supplierID uint, status *int8, goodsSN string, page, size int) ([]*Order, int64, error) {
+	return s.repo.ListBySupplier(ctx, supplierID, status, goodsSN, page, size)
 }
 
 // generateOrderSN 生成唯一订单号（时间戳+随机hex）

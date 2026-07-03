@@ -8,6 +8,7 @@ import (
 	"github.com/70548887/sup-platform/internal/http/middleware"
 	"github.com/70548887/sup-platform/internal/http/openapi/customer"
 	"github.com/70548887/sup-platform/internal/http/openapi/supplier"
+	"github.com/70548887/sup-platform/internal/http/response"
 	"github.com/70548887/sup-platform/internal/module/card"
 	"github.com/70548887/sup-platform/internal/module/goods"
 	"github.com/70548887/sup-platform/internal/module/ledger"
@@ -31,7 +32,7 @@ func SetupRouter(
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+		response.Success(c, gin.H{"status": "ok"})
 	})
 
 	// Legacy OpenAPI路由组（应用签名认证中间件）

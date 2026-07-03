@@ -141,10 +141,13 @@ func (r *OrderRepository) ListByCustomer(ctx context.Context, customerID uint, s
 }
 
 // ListBySupplier 分页查询供货商订单
-func (r *OrderRepository) ListBySupplier(ctx context.Context, supplierID uint, status *int8, page, size int) ([]*Order, int64, error) {
+func (r *OrderRepository) ListBySupplier(ctx context.Context, supplierID uint, status *int8, goodsSN string, page, size int) ([]*Order, int64, error) {
 	query := r.db.WithContext(ctx).Model(&Order{}).Where("supplier_id = ?", supplierID)
 	if status != nil {
 		query = query.Where("status = ?", *status)
+	}
+	if goodsSN != "" {
+		query = query.Where("goods_sn = ?", goodsSN)
 	}
 
 	var total int64
