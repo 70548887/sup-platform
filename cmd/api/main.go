@@ -1,12 +1,17 @@
 package main
 
 import (
-	"fmt"
-	"os"
+	"log"
+
+	"github.com/70548887/sup-platform/internal/app"
 )
 
 func main() {
-	fmt.Println("SUP Platform API Server starting...")
-	// TODO: 初始化配置、数据库、路由、启动HTTP服务
-	os.Exit(0)
+	application, err := app.New()
+	if err != nil {
+		log.Fatalf("Failed to initialize app: %v", err)
+	}
+	if err := application.Run(); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }
