@@ -11,7 +11,7 @@ import (
 )
 
 // 微差阈值：差异绝对值 <= 0.01 视为微差，自动冲销
-var microDiffThreshold = decimal.NewFromFloat(0.01)
+var microDiffThreshold = decimal.RequireFromString("0.01")
 
 // 每批获取的钱包/客户数量
 const batchSize = 1000

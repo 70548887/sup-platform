@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -11,6 +12,9 @@ import (
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
+
+// overageRate 超额费率：每次超额API调用的单价
+var overageRate = decimal.RequireFromString("0.01")
 
 // BillingService 计费引擎服务
 type BillingService struct {
@@ -57,6 +61,11 @@ func (s *BillingService) CheckQuota(ctx context.Context, tenantID uint) (allowed
 	// Redis miss或不可用，查DB
 	_, plan, err := s.repo.GetSubscriptionWithPlan(tenantID)
 	if err != nil {
+		// 区分无订阅和系统错误
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// 无订阅的租户：拒绝访问
+			return false, 0, nil
+		}
 		return false, 0, fmt.Errorf("billing: check quota get subscription: %w", err)
 	}
 
@@ -136,7 +145,7 @@ func (s *BillingService) GenerateMonthlyInvoice(ctx context.Context, tenantID ui
 	overageCount := usage.APICallCount - plan.MaxAPICallsPerMonth
 	var overageCharge decimal.Decimal
 	if overageCount > 0 {
-		overageCharge = decimal.NewFromInt(int64(overageCount)).Mul(decimal.NewFromFloat(0.01))
+		overageCharge = decimal.NewFromInt(int64(overageCount)).Mul(overageRate)
 	} else {
 		overageCharge = decimal.Zero
 	}

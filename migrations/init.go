@@ -70,5 +70,9 @@ func RunAll(db *gorm.DB) error {
 	if err := billing.Migrate(db); err != nil {
 		return fmt.Errorf("billing migrate: %w", err)
 	}
+	// 多租户数据迁移：确保现有数据tenant_id=1
+	if err := tenant.MigrateExistingData(db); err != nil {
+		return fmt.Errorf("tenant data migration: %w", err)
+	}
 	return nil
 }

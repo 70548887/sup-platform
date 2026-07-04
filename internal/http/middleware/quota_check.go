@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -54,7 +55,11 @@ func QuotaCheckMiddleware(billingService *billing.BillingService, enabled bool) 
 		}
 
 		// 异步记录调用（不阻塞请求）
-		go billingService.RecordAPICall(context.Background(), tenantID)
+		go func(tid uint) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = billingService.RecordAPICall(ctx, tid)
+		}(tenantID)
 
 		c.Next()
 	}

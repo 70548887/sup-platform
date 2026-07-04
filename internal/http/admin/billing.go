@@ -266,6 +266,54 @@ func (h *Handler) ListBillingInvoices(c *gin.Context) {
 	})
 }
 
+// GenerateInvoice POST /admin/billing/invoices/generate — 生成月度账单
+func (h *Handler) GenerateInvoice(c *gin.Context) {
+	if h.BillingSvc == nil {
+		response.Error(c, "计费服务未启用")
+		return
+	}
+
+	var req struct {
+		TenantID uint   `json:"tenant_id" binding:"required"`
+		Month    string `json:"month" binding:"required"` // "2026-07"
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ParamError(c, "", "参数错误: tenant_id和month必填")
+		return
+	}
+
+	// 校验month格式
+	_, parseErr := time.Parse("2006-01", req.Month)
+	if parseErr != nil {
+		response.ParamError(c, "month", "月份格式错误，应为 2006-01")
+		return
+	}
+
+	invoice, err := h.BillingSvc.GenerateMonthlyInvoice(c.Request.Context(), req.TenantID, req.Month)
+	if err != nil {
+		response.Error(c, fmt.Sprintf("生成账单失败: %v", err))
+		return
+	}
+
+	// 记录审计日志
+	adminID := getAdminUserID(c)
+	adminName := getAdminUsername(c)
+	h.AuditSvc.Log(context.Background(), audit.NewEntry(
+		adminID, adminName, "billing.invoice_generate", "invoice", invoice.ID,
+		fmt.Sprintf("生成月度账单: tenant=%d month=%s amount=%s", req.TenantID, req.Month, invoice.TotalAmount.StringFixed(2)),
+	))
+
+	response.Success(c, gin.H{
+		"id":           invoice.ID,
+		"tenant_id":    invoice.TenantID,
+		"month":        invoice.Month,
+		"plan_fee":     invoice.PlanFee.StringFixed(2),
+		"overage":      invoice.OverageCharge.StringFixed(2),
+		"total_amount": invoice.TotalAmount.StringFixed(2),
+		"status":       invoice.Status,
+	})
+}
+
 // MarkInvoicePaid POST /admin/billing/invoices/:id/mark-paid — 标记账单已支付
 func (h *Handler) MarkInvoicePaid(c *gin.Context) {
 	if h.BillingSvc == nil {

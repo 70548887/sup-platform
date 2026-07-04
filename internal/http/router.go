@@ -63,9 +63,6 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	// 审计中间件：记录所有写操作(POST/PUT/DELETE/PATCH)
 	r.Use(audit.AuditMiddleware(deps.AuditSvc))
 
-	// 租户上下文中间件：注入tenantID到Context
-	r.Use(middleware.TenantContextMiddleware(deps.Config))
-
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
 		response.Success(c, gin.H{"status": "ok"})
@@ -76,6 +73,7 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 
 	// 客户端API
 	customerGroup := r.Group("/openapi/customer")
+	customerGroup.Use(middleware.TenantContextMiddleware(deps.Config))
 	customerGroup.Use(legacyAuth)
 	customerGroup.Use(middleware.RateLimitMiddleware(deps.RateLimiter, deps.DB))
 	if deps.MultiTenantEnabled {
@@ -101,6 +99,7 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 
 	// 供货端API
 	supplierGroup := r.Group("/openapi/supplier")
+	supplierGroup.Use(middleware.TenantContextMiddleware(deps.Config))
 	supplierGroup.Use(legacyAuth)
 	supplierGroup.Use(middleware.RateLimitMiddleware(deps.RateLimiter, deps.DB))
 	if deps.MultiTenantEnabled {
@@ -216,12 +215,14 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 		adminGroup.POST("/billing/plans", adminHandler.CreateBillingPlan)
 		adminGroup.GET("/billing/subscriptions", adminHandler.ListBillingSubscriptions)
 		adminGroup.GET("/billing/invoices", adminHandler.ListBillingInvoices)
+		adminGroup.POST("/billing/invoices/generate", adminHandler.GenerateInvoice)
 		adminGroup.POST("/billing/invoices/:id/mark-paid", adminHandler.MarkInvoicePaid)
 	}
 
 	// 租户管理后台（仅多租户模式启用）
 	if deps.MultiTenantEnabled {
 		tenantAdminGroup := r.Group("/tenant-admin")
+		tenantAdminGroup.Use(middleware.TenantContextMiddleware(deps.Config))
 		tenantAdminGroup.Use(middleware.JWTAuth(deps.AuthSvc))
 		tenantAdminGroup.Use(middleware.TenantRBACMiddleware(deps.TenantSvc))
 		{
@@ -233,6 +234,7 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 				LedgerSvc:    deps.LedgerSvc,
 				AuditSvc:     deps.AuditSvc,
 				AnalyticsSvc: deps.AnalyticsSvc,
+				BillingSvc:   deps.BillingSvc,
 			}
 			tenantAdminGroup.GET("/dashboard", tenantHandler.GetDashboard)
 			tenantAdminGroup.GET("/orders", tenantHandler.ListOrders)

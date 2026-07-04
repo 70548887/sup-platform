@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -122,12 +123,17 @@ func (r *RateLimiter) Allow(ctx context.Context, appID string, limit int) (allow
 
 	arr, ok := res.([]interface{})
 	if !ok || len(arr) != 3 {
+		log.Printf("[WARN] ratelimit: unexpected script response type: %T", res)
 		return true, -1, 0, nil
 	}
 
-	allowedVal, _ := arr[0].(int64)
-	remainingVal, _ := arr[1].(int64)
-	resetAtVal, _ := arr[2].(int64)
+	allowedVal, ok1 := arr[0].(int64)
+	remainingVal, ok2 := arr[1].(int64)
+	resetAtVal, ok3 := arr[2].(int64)
+	if !ok1 || !ok2 || !ok3 {
+		log.Printf("[WARN] ratelimit: unexpected script response values: %v", arr)
+		return true, -1, 0, nil
+	}
 
 	return allowedVal == 1, int(remainingVal), resetAtVal, nil
 }

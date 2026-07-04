@@ -9,6 +9,7 @@ import (
 	"github.com/70548887/sup-platform/internal/http/response"
 	"github.com/70548887/sup-platform/internal/module/analytics"
 	"github.com/70548887/sup-platform/internal/module/audit"
+	"github.com/70548887/sup-platform/internal/module/billing"
 	"github.com/70548887/sup-platform/internal/module/goods"
 	"github.com/70548887/sup-platform/internal/module/ledger"
 	"github.com/70548887/sup-platform/internal/module/order"
@@ -25,6 +26,7 @@ type Handler struct {
 	LedgerSvc    *ledger.LedgerService
 	AuditSvc     *audit.AuditService
 	AnalyticsSvc *analytics.AnalyticsService
+	BillingSvc   *billing.BillingService
 }
 
 // getTenantID 从Gin Context获取租户ID

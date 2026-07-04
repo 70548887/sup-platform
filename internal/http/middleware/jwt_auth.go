@@ -57,6 +57,7 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		// 3-4. 提取UserID和Role，注入Context
 		c.Set(ContextKeyUserID, claims.UserID)
 		c.Set(ContextKeyRole, claims.Role)
+		c.Set("tenant_id", claims.TenantID)
 
 		c.Next()
 	}
@@ -111,6 +112,7 @@ func JWTAuthWithRole(authService *auth.AuthService, allowedRoles ...string) gin.
 
 		c.Set(ContextKeyUserID, claims.UserID)
 		c.Set(ContextKeyRole, claims.Role)
+		c.Set("tenant_id", claims.TenantID)
 
 		c.Next()
 	}
