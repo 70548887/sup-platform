@@ -9,6 +9,7 @@ import (
 	"github.com/70548887/sup-platform/internal/http/openapi/customer"
 	"github.com/70548887/sup-platform/internal/http/openapi/supplier"
 	"github.com/70548887/sup-platform/internal/http/response"
+	"github.com/70548887/sup-platform/internal/module/audit"
 	"github.com/70548887/sup-platform/internal/module/card"
 	"github.com/70548887/sup-platform/internal/module/goods"
 	"github.com/70548887/sup-platform/internal/module/ledger"
@@ -22,6 +23,7 @@ func SetupRouter(
 	orderSvc *order.OrderService,
 	cardSvc *card.CardService,
 	ledgerSvc *ledger.LedgerService,
+	auditSvc *audit.AuditService,
 	cfg *config.Config,
 ) *gin.Engine {
 	if cfg.App.Mode == "release" {
@@ -29,6 +31,9 @@ func SetupRouter(
 	}
 
 	r := gin.Default()
+
+	// 审计中间件：记录所有写操作(POST/PUT/DELETE/PATCH)
+	r.Use(audit.AuditMiddleware(auditSvc))
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {

@@ -4,14 +4,16 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/70548887/sup-platform/internal/module/account"
+	"github.com/70548887/sup-platform/internal/module/audit"
 	"github.com/70548887/sup-platform/internal/module/card"
 	"github.com/70548887/sup-platform/internal/module/goods"
 	"github.com/70548887/sup-platform/internal/module/ledger"
 	"github.com/70548887/sup-platform/internal/module/order"
+	"github.com/70548887/sup-platform/internal/module/refund"
 )
 
 // RunAll 按依赖顺序执行所有模块的数据库迁移
-// 顺序：account → goods → card → order → ledger
+// 顺序：account → goods → card → order → ledger → refund
 func RunAll(db *gorm.DB) error {
 	if err := account.AutoMigrate(db); err != nil {
 		return err
@@ -26,6 +28,12 @@ func RunAll(db *gorm.DB) error {
 		return err
 	}
 	if err := ledger.AutoMigrate(db); err != nil {
+		return err
+	}
+	if err := audit.Migrate(db); err != nil {
+		return err
+	}
+	if err := refund.Migrate(db); err != nil {
 		return err
 	}
 	return nil

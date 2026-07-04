@@ -12,18 +12,22 @@ import (
 
 	"github.com/70548887/sup-platform/internal/config"
 	apphttp "github.com/70548887/sup-platform/internal/http"
+	"github.com/70548887/sup-platform/internal/module/audit"
 	"github.com/70548887/sup-platform/internal/module/card"
 	"github.com/70548887/sup-platform/internal/module/goods"
 	"github.com/70548887/sup-platform/internal/module/ledger"
+	"github.com/70548887/sup-platform/internal/module/notify"
 	"github.com/70548887/sup-platform/internal/module/order"
+	"github.com/70548887/sup-platform/internal/module/refund"
 	"github.com/70548887/sup-platform/migrations"
 )
 
 // App 应用实例
 type App struct {
-	DB     *gorm.DB
-	Router *gin.Engine
-	Config *config.Config
+	DB        *gorm.DB
+	Router    *gin.Engine
+	Config    *config.Config
+	RefundSvc *refund.RefundService
 }
 
 // New 初始化应用
@@ -48,13 +52,24 @@ func New() (*App, error) {
 	cardSvc := card.NewCardService(db)
 	orderSvc := order.NewOrderService(db, ledgerSvc)
 
+	// 4.1 初始化通知服务并注入OrderService
+	notifySvc := notify.NewNotifyService(db)
+	orderSvc.SetNotifier(notifySvc)
+
+	// 4.2 初始化审计日志服务
+	auditSvc := audit.NewAuditService(db)
+
+	// 4.3 初始化退款服务
+	refundSvc := refund.NewRefundService(db, orderSvc, ledgerSvc)
+
 	// 5. 设置路由
-	router := apphttp.SetupRouter(db, goodsSvc, orderSvc, cardSvc, ledgerSvc, cfg)
+	router := apphttp.SetupRouter(db, goodsSvc, orderSvc, cardSvc, ledgerSvc, auditSvc, cfg)
 
 	return &App{
-		DB:     db,
-		Router: router,
-		Config: cfg,
+		DB:        db,
+		Router:    router,
+		Config:    cfg,
+		RefundSvc: refundSvc,
 	}, nil
 }
 

@@ -13,6 +13,23 @@ import (
 	"github.com/70548887/sup-platform/internal/module/ledger"
 )
 
+// Notifier 通知投递接口（由 notify.NotifyService 实现，避免循环依赖）
+type Notifier interface {
+	SendOrderCallback(ctx context.Context, ord *Order, eventType string) error
+}
+
+// statusEventMap 订单状态对应的事件类型
+var statusEventMap = map[int8]string{
+	StatusPending:      "order.pending",
+	StatusProcessing:   "order.processing",
+	StatusReplenishing: "order.replenishing",
+	StatusRefunding:    "order.refunding",
+	StatusCompleted:    "order.completed",
+	StatusReturned:     "order.returned",
+	StatusRefunded:     "order.refunded",
+	StatusAbnormal:     "order.abnormal",
+}
+
 // CreateOrderParams 创建订单参数
 type CreateOrderParams struct {
 	AppID           uint
@@ -32,6 +49,7 @@ type CreateOrderParams struct {
 type OrderService struct {
 	repo      *OrderRepository
 	ledgerSvc *ledger.LedgerService
+	notifier  Notifier
 	db        *gorm.DB
 }
 
@@ -42,6 +60,11 @@ func NewOrderService(db *gorm.DB, ledgerSvc *ledger.LedgerService) *OrderService
 		ledgerSvc: ledgerSvc,
 		db:        db,
 	}
+}
+
+// SetNotifier 设置通知服务（避免循环依赖，通过接口注入）
+func (s *OrderService) SetNotifier(n Notifier) {
+	s.notifier = n
 }
 
 // CreateOrder 创建订单
@@ -170,6 +193,20 @@ func (s *OrderService) TransitionStatus(ctx context.Context, orderID uint, newSt
 	if newStatus == StatusRefunded {
 		if err := s.processRefund(ctx, order); err != nil {
 			return fmt.Errorf("order: refund process failed: %w", err)
+		}
+	}
+
+	// 触发Webhook通知（异步投递，不阻塞主流程）
+	if s.notifier != nil && order.NotifyURL != "" {
+		order.Status = newStatus // 更新内存中的状态，供通知使用
+		eventType, ok := statusEventMap[newStatus]
+		if !ok {
+			eventType = "order.status_changed"
+		}
+		// 异步发送，忽略错误（失败会记录到DB，后续重试）
+		if err := s.notifier.SendOrderCallback(ctx, order, eventType); err != nil {
+			// 通知投递初始化失败不影响状态变更，仅记录日志
+			fmt.Printf("[WARN] order: send callback for order %s failed: %v\n", order.OrderSN, err)
 		}
 	}
 
