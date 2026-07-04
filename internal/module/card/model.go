@@ -13,7 +13,8 @@ type CardBatch struct {
 
 // Card 单张卡密
 type Card struct {
-	ID        uint   `gorm:"primarykey"`
+	ID       uint   `gorm:"primarykey"`
+	TenantID uint   `gorm:"not null;default:1;index"`
 	BatchID   uint   `gorm:"not null;index"`
 	GoodsID   uint   `gorm:"not null;index:idx_goods_status"`
 	Content   string `gorm:"type:text;not null"` // 卡密内容（TODO: AES-GCM加密）

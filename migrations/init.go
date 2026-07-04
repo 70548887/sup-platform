@@ -1,11 +1,14 @@
 package migrations
 
 import (
+	"fmt"
+
 	"gorm.io/gorm"
 
 	"github.com/70548887/sup-platform/internal/module/account"
 	"github.com/70548887/sup-platform/internal/module/analytics"
 	"github.com/70548887/sup-platform/internal/module/audit"
+	"github.com/70548887/sup-platform/internal/module/billing"
 	"github.com/70548887/sup-platform/internal/module/card"
 	"github.com/70548887/sup-platform/internal/module/docking"
 	"github.com/70548887/sup-platform/internal/module/goods"
@@ -15,6 +18,7 @@ import (
 	"github.com/70548887/sup-platform/internal/module/recharge"
 	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
+	"github.com/70548887/sup-platform/internal/module/tenant"
 )
 
 // RunAll 按依赖顺序执行所有模块的数据库迁移
@@ -58,6 +62,13 @@ func RunAll(db *gorm.DB) error {
 	}
 	if err := reconciliation.Migrate(db); err != nil {
 		return err
+	}
+	// Phase 4B 模块迁移
+	if err := tenant.Migrate(db); err != nil {
+		return fmt.Errorf("tenant migrate: %w", err)
+	}
+	if err := billing.Migrate(db); err != nil {
+		return fmt.Errorf("billing migrate: %w", err)
 	}
 	return nil
 }

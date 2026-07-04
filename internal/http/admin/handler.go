@@ -9,6 +9,7 @@ import (
 	"github.com/70548887/sup-platform/internal/http/response"
 	"github.com/70548887/sup-platform/internal/module/analytics"
 	"github.com/70548887/sup-platform/internal/module/audit"
+	"github.com/70548887/sup-platform/internal/module/billing"
 	"github.com/70548887/sup-platform/internal/module/docking"
 	"github.com/70548887/sup-platform/internal/module/goods"
 	"github.com/70548887/sup-platform/internal/module/ledger"
@@ -17,6 +18,7 @@ import (
 	"github.com/70548887/sup-platform/internal/module/recharge"
 	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
+	"github.com/70548887/sup-platform/internal/module/tenant"
 )
 
 // Handler Admin管理后台处理器
@@ -32,6 +34,8 @@ type Handler struct {
 	PricingSvc        *pricing.PricingService
 	ReconciliationSvc *reconciliation.ReconciliationService
 	AnalyticsSvc      *analytics.AnalyticsService
+	BillingSvc        *billing.BillingService
+	TenantSvc         *tenant.TenantService
 }
 
 // getAdminUserID 从JWT Context中获取管理员用户ID

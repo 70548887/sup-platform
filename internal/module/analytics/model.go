@@ -5,6 +5,7 @@ import "github.com/shopspring/decimal"
 // DailyStats 每日统计（预聚合）
 type DailyStats struct {
 	ID              uint            `gorm:"primarykey"`
+	TenantID        uint            `gorm:"not null;default:1;index"`
 	Date            string          `gorm:"size:10;not null;uniqueIndex"` // 2006-01-02
 	TotalOrders     int             `gorm:"default:0"`
 	TotalAmount     decimal.Decimal `gorm:"type:decimal(16,6);default:0"`
@@ -17,7 +18,8 @@ type DailyStats struct {
 
 // HotGoods 热卖商品排行
 type HotGoods struct {
-	ID          uint            `gorm:"primarykey"`
+	ID       uint            `gorm:"primarykey"`
+	TenantID uint            `gorm:"not null;default:1;index"`
 	Date        string          `gorm:"size:10;not null;index:idx_date_goods"`
 	GoodsID     uint            `gorm:"not null;index:idx_date_goods"`
 	GoodsName   string          `gorm:"size:200"`

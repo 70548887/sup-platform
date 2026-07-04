@@ -17,6 +17,7 @@ type GoodsCategory struct {
 // Goods 商品
 type Goods struct {
 	ID                uint            `gorm:"primarykey"`
+	TenantID          uint            `gorm:"not null;default:1;index:idx_tenant_category"`
 	SerialNumber      string          `gorm:"size:32;uniqueIndex;not null"` // 商品编号
 	CategoryID        uint            `gorm:"not null;index"`
 	SupplierID        uint            `gorm:"not null;index"` // 供货商UserID

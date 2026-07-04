@@ -1,37 +1,54 @@
 version: '3.8'
+
 services:
   api:
     build: .
+    env_file: .env
     ports:
-      - "8080:8080"
+      - "${API_PORT:-8080}:8080"
     depends_on:
-      - mysql
-      - redis
-    environment:
-      - DB_HOST=mysql
-      - REDIS_ADDR=redis:6379
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
 
   worker:
     build: .
     command: worker
+    env_file: .env
     depends_on:
-      - mysql
-      - redis
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
 
   mysql:
     image: mysql:8.0
     environment:
-      MYSQL_ROOT_PASSWORD: sup_root_123
-      MYSQL_DATABASE: sup_platform
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root123}
+      MYSQL_DATABASE: ${DB_NAME:-sup_platform}
+      MYSQL_CHARSET: utf8mb4
     ports:
-      - "3306:3306"
+      - "${DB_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
 
 volumes:
   mysql_data:
+  redis_data:

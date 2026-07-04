@@ -4,7 +4,8 @@ import "github.com/shopspring/decimal"
 
 // ReconciliationTask 对账任务
 type ReconciliationTask struct {
-	ID           uint   `gorm:"primarykey"`
+	ID       uint   `gorm:"primarykey"`
+	TenantID uint   `gorm:"not null;default:1;index"`
 	Type         string `gorm:"size:30;not null"`                        // balance_check, cross_verify
 	Status       string `gorm:"size:20;not null;default:running"`        // running, completed, failed
 	TotalChecked int    `gorm:"default:0"`

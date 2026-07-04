@@ -21,6 +21,7 @@ import (
 	"github.com/70548887/sup-platform/internal/module/analytics"
 	"github.com/70548887/sup-platform/internal/module/audit"
 	"github.com/70548887/sup-platform/internal/module/auth"
+	"github.com/70548887/sup-platform/internal/module/billing"
 	"github.com/70548887/sup-platform/internal/module/card"
 	"github.com/70548887/sup-platform/internal/module/docking"
 	"github.com/70548887/sup-platform/internal/module/goods"
@@ -31,7 +32,9 @@ import (
 	"github.com/70548887/sup-platform/internal/module/recharge"
 	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
+	"github.com/70548887/sup-platform/internal/module/tenant"
 	"github.com/70548887/sup-platform/internal/pkg/ratelimit"
+	pkgtenant "github.com/70548887/sup-platform/internal/pkg/tenant"
 	"github.com/70548887/sup-platform/migrations"
 )
 
@@ -61,6 +64,12 @@ func New() (*App, error) {
 
 	// 3.5 连接Redis（降级模式：连接失败不影响启动）
 	redisClient := connectRedis(cfg)
+
+	// 3.6 多租户初始化
+	if cfg.MultiTenant.Enabled {
+		pkgtenant.RegisterTenantScope(db)
+		log.Printf("[INFO] Multi-tenant mode enabled")
+	}
 
 	// 4. 初始化各Service
 	ledgerSvc := ledger.NewLedgerService(db)
@@ -105,24 +114,35 @@ func New() (*App, error) {
 		}
 	}
 
+	// 4.7 Phase 4B 服务初始化
+	tenantSvc := tenant.NewTenantService(db)
+	billingSvc := billing.NewBillingService(db, redisClient, cfg.Redis.Prefix)
+	if cfg.MultiTenant.Enabled {
+		tenantSvc.InitDefaultTenant(context.Background())
+		billingSvc.InitDefaultPlans(context.Background())
+	}
+
 	// 5. 设置路由
 	router := apphttp.SetupRouter(apphttp.RouterDeps{
-		DB:                db,
-		Config:            cfg,
-		GoodsSvc:          goodsSvc,
-		OrderSvc:          orderSvc,
-		CardSvc:           cardSvc,
-		LedgerSvc:         ledgerSvc,
-		AuditSvc:          auditSvc,
-		RechargeSvc:       rechargeSvc,
-		DockingSvc:        dockingSvc,
-		RefundSvc:         refundSvc,
-		AuthSvc:           authSvc,
-		RedisClient:       redisClient,
-		PricingSvc:        pricingSvc,
-		AnalyticsSvc:      analyticsSvc,
-		ReconciliationSvc: reconciliationSvc,
-		RateLimiter:       rateLimiter,
+		DB:                 db,
+		Config:             cfg,
+		GoodsSvc:           goodsSvc,
+		OrderSvc:           orderSvc,
+		CardSvc:            cardSvc,
+		LedgerSvc:          ledgerSvc,
+		AuditSvc:           auditSvc,
+		RechargeSvc:        rechargeSvc,
+		DockingSvc:         dockingSvc,
+		RefundSvc:          refundSvc,
+		AuthSvc:            authSvc,
+		RedisClient:        redisClient,
+		PricingSvc:         pricingSvc,
+		AnalyticsSvc:       analyticsSvc,
+		ReconciliationSvc:  reconciliationSvc,
+		RateLimiter:        rateLimiter,
+		TenantSvc:          tenantSvc,
+		BillingSvc:         billingSvc,
+		MultiTenantEnabled: cfg.MultiTenant.Enabled,
 	})
 
 	return &App{
@@ -166,6 +186,10 @@ func loadConfig() *config.Config {
 		JWT: config.JWTConfig{
 			Secret: getEnv("JWT_SECRET", "sup-platform-secret-key"),
 			Expire: getEnvInt("JWT_EXPIRE", 72),
+		},
+		MultiTenant: config.MultiTenantConfig{
+			Enabled:         getEnv("MULTI_TENANT_ENABLED", "false") == "true",
+			DefaultTenantID: uint(getEnvInt("DEFAULT_TENANT_ID", 1)),
 		},
 	}
 	return cfg

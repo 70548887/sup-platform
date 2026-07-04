@@ -2,7 +2,8 @@ package account
 
 // User 统一用户表
 type User struct {
-	ID        uint   `gorm:"primarykey"`
+	ID       uint `gorm:"primarykey"`
+	TenantID uint `gorm:"not null;default:1;index"`
 	Username  string `gorm:"size:64;uniqueIndex;not null"`  // 登录名
 	Password  string `gorm:"size:128;not null"`             // bcrypt哈希
 	Nickname  string `gorm:"size:64"`
@@ -16,7 +17,8 @@ type User struct {
 
 // ApiApp API应用凭证
 type ApiApp struct {
-	ID          uint   `gorm:"primarykey"`
+	ID       uint `gorm:"primarykey"`
+	TenantID uint `gorm:"not null;default:1;index"`
 	UserID      uint   `gorm:"not null;index"`
 	AppId       string `gorm:"size:64;uniqueIndex;not null"`
 	AppSecret   string `gorm:"size:128;not null"`

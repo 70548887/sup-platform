@@ -5,6 +5,7 @@ import "github.com/shopspring/decimal"
 // Order 订单主表
 type Order struct {
 	ID                 uint            `gorm:"primarykey"`
+	TenantID           uint            `gorm:"not null;default:1;index:idx_tenant_status"`
 	OrderSN            string          `gorm:"size:32;uniqueIndex;not null"`          // 平台订单号
 	CustomerOrderID    string          `gorm:"size:64;index:idx_app_custorder"`       // 客户方订单号（幂等）
 	AppID              uint            `gorm:"not null;index:idx_app_custorder"`      // API应用ID

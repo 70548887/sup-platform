@@ -5,6 +5,7 @@ import "github.com/shopspring/decimal"
 // PricingRule 定价规则
 type PricingRule struct {
 	ID              uint            `gorm:"primarykey"`
+	TenantID        uint            `gorm:"not null;default:1;index"`
 	GoodsID         uint            `gorm:"not null;index:idx_goods_type"`
 	RuleType        string          `gorm:"size:30;not null;index:idx_goods_type"` // customer_group, tiered, promotion
 	CustomerGroupID *uint           `gorm:"index"`
@@ -24,7 +25,8 @@ type PricingRule struct {
 
 // CustomerGroup 客户分组
 type CustomerGroup struct {
-	ID          uint   `gorm:"primarykey"`
+	ID       uint   `gorm:"primarykey"`
+	TenantID uint   `gorm:"not null;default:1;index"`
 	Name        string `gorm:"size:50;not null"`
 	Description string `gorm:"size:200"`
 	Status      int8   `gorm:"not null;default:1"`

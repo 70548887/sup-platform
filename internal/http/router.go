@@ -11,9 +11,11 @@ import (
 	"github.com/70548887/sup-platform/internal/http/openapi/customer"
 	"github.com/70548887/sup-platform/internal/http/openapi/supplier"
 	"github.com/70548887/sup-platform/internal/http/response"
+	tenanthttp "github.com/70548887/sup-platform/internal/http/tenant"
 	"github.com/70548887/sup-platform/internal/module/analytics"
 	"github.com/70548887/sup-platform/internal/module/audit"
 	"github.com/70548887/sup-platform/internal/module/auth"
+	"github.com/70548887/sup-platform/internal/module/billing"
 	"github.com/70548887/sup-platform/internal/module/card"
 	"github.com/70548887/sup-platform/internal/module/docking"
 	"github.com/70548887/sup-platform/internal/module/goods"
@@ -23,6 +25,7 @@ import (
 	"github.com/70548887/sup-platform/internal/module/recharge"
 	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
+	"github.com/70548887/sup-platform/internal/module/tenant"
 	"github.com/70548887/sup-platform/internal/pkg/ratelimit"
 )
 
@@ -42,8 +45,11 @@ type RouterDeps struct {
 	RedisClient       *redis.Client
 	PricingSvc        *pricing.PricingService
 	AnalyticsSvc      *analytics.AnalyticsService
-	ReconciliationSvc *reconciliation.ReconciliationService
-	RateLimiter       *ratelimit.RateLimiter
+	ReconciliationSvc  *reconciliation.ReconciliationService
+	RateLimiter        *ratelimit.RateLimiter
+	TenantSvc          *tenant.TenantService
+	BillingSvc         *billing.BillingService
+	MultiTenantEnabled bool
 }
 
 // SetupRouter 初始化并返回配置好的路由引擎
@@ -57,6 +63,9 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	// 审计中间件：记录所有写操作(POST/PUT/DELETE/PATCH)
 	r.Use(audit.AuditMiddleware(deps.AuditSvc))
 
+	// 租户上下文中间件：注入tenantID到Context
+	r.Use(middleware.TenantContextMiddleware(deps.Config))
+
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
 		response.Success(c, gin.H{"status": "ok"})
@@ -69,6 +78,9 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	customerGroup := r.Group("/openapi/customer")
 	customerGroup.Use(legacyAuth)
 	customerGroup.Use(middleware.RateLimitMiddleware(deps.RateLimiter, deps.DB))
+	if deps.MultiTenantEnabled {
+		customerGroup.Use(middleware.QuotaCheckMiddleware(deps.BillingSvc, deps.MultiTenantEnabled))
+	}
 	{
 		customerHandler := &customer.Handler{
 			DB:         deps.DB,
@@ -91,6 +103,9 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	supplierGroup := r.Group("/openapi/supplier")
 	supplierGroup.Use(legacyAuth)
 	supplierGroup.Use(middleware.RateLimitMiddleware(deps.RateLimiter, deps.DB))
+	if deps.MultiTenantEnabled {
+		supplierGroup.Use(middleware.QuotaCheckMiddleware(deps.BillingSvc, deps.MultiTenantEnabled))
+	}
 	{
 		supplierHandler := &supplier.Handler{
 			DB:       deps.DB,
@@ -124,6 +139,8 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 			PricingSvc:        deps.PricingSvc,
 			ReconciliationSvc: deps.ReconciliationSvc,
 			AnalyticsSvc:      deps.AnalyticsSvc,
+			BillingSvc:        deps.BillingSvc,
+			TenantSvc:         deps.TenantSvc,
 		}
 
 		// 用户管理
@@ -193,6 +210,42 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 		adminGroup.GET("/analytics/order-stats", adminHandler.GetOrderStats)
 		adminGroup.GET("/analytics/customer-stats", adminHandler.GetCustomerStats)
 		adminGroup.POST("/analytics/aggregate", adminHandler.TriggerAggregate)
+
+		// 计费管理
+		adminGroup.GET("/billing/plans", adminHandler.ListBillingPlans)
+		adminGroup.POST("/billing/plans", adminHandler.CreateBillingPlan)
+		adminGroup.GET("/billing/subscriptions", adminHandler.ListBillingSubscriptions)
+		adminGroup.GET("/billing/invoices", adminHandler.ListBillingInvoices)
+		adminGroup.POST("/billing/invoices/:id/mark-paid", adminHandler.MarkInvoicePaid)
+	}
+
+	// 租户管理后台（仅多租户模式启用）
+	if deps.MultiTenantEnabled {
+		tenantAdminGroup := r.Group("/tenant-admin")
+		tenantAdminGroup.Use(middleware.JWTAuth(deps.AuthSvc))
+		tenantAdminGroup.Use(middleware.TenantRBACMiddleware(deps.TenantSvc))
+		{
+			tenantHandler := &tenanthttp.Handler{
+				DB:           deps.DB,
+				TenantSvc:    deps.TenantSvc,
+				GoodsSvc:     deps.GoodsSvc,
+				OrderSvc:     deps.OrderSvc,
+				LedgerSvc:    deps.LedgerSvc,
+				AuditSvc:     deps.AuditSvc,
+				AnalyticsSvc: deps.AnalyticsSvc,
+			}
+			tenantAdminGroup.GET("/dashboard", tenantHandler.GetDashboard)
+			tenantAdminGroup.GET("/orders", tenantHandler.ListOrders)
+			tenantAdminGroup.GET("/orders/:id", tenantHandler.GetOrder)
+			tenantAdminGroup.GET("/goods", tenantHandler.ListGoods)
+			tenantAdminGroup.PATCH("/goods/:id/status", tenantHandler.UpdateGoodsStatus)
+			tenantAdminGroup.GET("/admins", tenantHandler.ListAdmins)
+			tenantAdminGroup.POST("/admins", tenantHandler.AddAdmin)
+			tenantAdminGroup.DELETE("/admins/:id", tenantHandler.RemoveAdmin)
+			tenantAdminGroup.GET("/subscription", tenantHandler.GetSubscription)
+			tenantAdminGroup.GET("/usage", tenantHandler.GetUsage)
+			tenantAdminGroup.POST("/subscription/upgrade", tenantHandler.UpgradeSubscription)
+		}
 	}
 
 	return r

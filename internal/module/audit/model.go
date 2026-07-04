@@ -2,7 +2,8 @@ package audit
 
 // AuditLog 审计日志
 type AuditLog struct {
-	ID         uint   `gorm:"primarykey"`
+	ID       uint   `gorm:"primarykey"`
+	TenantID uint   `gorm:"not null;default:1;index"`
 	UserID     uint   `gorm:"index"`                    // 操作者ID (0=system)
 	Username   string `gorm:"size:50;index"`            // 操作者名称
 	Action     string `gorm:"size:50;not null;index"`   // 操作类型

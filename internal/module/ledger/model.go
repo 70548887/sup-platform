@@ -4,7 +4,8 @@ import "github.com/shopspring/decimal"
 
 // Wallet 余额账户
 type Wallet struct {
-	ID        uint            `gorm:"primarykey"`
+	ID       uint            `gorm:"primarykey"`
+	TenantID uint            `gorm:"not null;default:1;index"`
 	UserID    uint            `gorm:"not null;uniqueIndex"`
 	Balance   decimal.Decimal `gorm:"type:decimal(16,6);not null;default:0"`
 	Frozen    decimal.Decimal `gorm:"type:decimal(16,6);not null;default:0"` // 冻结金额
@@ -15,6 +16,7 @@ type Wallet struct {
 // LedgerEntry 不可变账本流水（只INSERT不UPDATE）
 type LedgerEntry struct {
 	ID           uint            `gorm:"primarykey"`
+	TenantID     uint            `gorm:"not null;default:1;index"`
 	WalletID     uint            `gorm:"not null;index"`
 	UserID       uint            `gorm:"not null;index"`
 	Type         string          `gorm:"size:30;not null;index"` // recharge/order_pay/order_refund/withdraw/freeze/unfreeze/bonus

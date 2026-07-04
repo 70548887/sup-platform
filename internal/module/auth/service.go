@@ -41,12 +41,7 @@ type ApiAppInfo struct {
 	Status      int
 }
 
-// Claims JWT自定义Claims
-type Claims struct {
-	UserID uint   `json:"user_id"`
-	Role   string `json:"role"` // admin / supplier / customer
-	jwt.RegisteredClaims
-}
+// Claims 定义已移至 claims.go
 
 // AuthService 认证服务
 type AuthService struct {
@@ -150,11 +145,13 @@ func (s *AuthService) CheckIPWhitelist(clientIP, whitelist string) bool {
 }
 
 // GenerateJWT 生成JWT token
-func (s *AuthService) GenerateJWT(userID uint, role string) (string, error) {
+// tenantID=0 表示平台超管，>0 表示租户管理员
+func (s *AuthService) GenerateJWT(userID uint, role string, tenantID uint) (string, error) {
 	now := time.Now()
 	claims := &Claims{
-		UserID: userID,
-		Role:   role,
+		UserID:   userID,
+		Role:     role,
+		TenantID: tenantID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.jwtExpire)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -237,5 +234,5 @@ func (s *AuthService) Login(username, password, role string) (string, error) {
 		return "", fmt.Errorf("用户名或密码错误")
 	}
 
-	return s.GenerateJWT(cred.ID, role)
+	return s.GenerateJWT(cred.ID, role, 0)
 }

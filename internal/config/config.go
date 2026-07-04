@@ -2,10 +2,11 @@ package config
 
 // Config 应用配置
 type Config struct {
-	App      AppConfig      `yaml:"app"`
-	Database DatabaseConfig `yaml:"database"`
-	Redis    RedisConfig    `yaml:"redis"`
-	JWT      JWTConfig      `yaml:"jwt"`
+	App         AppConfig         `yaml:"app"`
+	Database    DatabaseConfig    `yaml:"database"`
+	Redis       RedisConfig       `yaml:"redis"`
+	JWT         JWTConfig         `yaml:"jwt"`
+	MultiTenant MultiTenantConfig `yaml:"multi_tenant"`
 }
 
 type AppConfig struct {
@@ -34,4 +35,10 @@ type RedisConfig struct {
 type JWTConfig struct {
 	Secret string `yaml:"secret"`
 	Expire int    `yaml:"expire"` // hours
+}
+
+// MultiTenantConfig 多租户配置
+type MultiTenantConfig struct {
+	Enabled         bool `yaml:"enabled"`
+	DefaultTenantID uint `yaml:"default_tenant_id"`
 }
