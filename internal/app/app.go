@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,7 +16,9 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/70548887/sup-platform/internal/adapter"
+	"github.com/70548887/sup-platform/internal/adapter/yike"
 	"github.com/70548887/sup-platform/internal/adapter/yile"
+	"github.com/70548887/sup-platform/internal/adapter/zhike"
 	"github.com/70548887/sup-platform/internal/config"
 	apphttp "github.com/70548887/sup-platform/internal/http"
 	"github.com/70548887/sup-platform/internal/module/analytics"
@@ -32,7 +35,9 @@ import (
 	"github.com/70548887/sup-platform/internal/module/recharge"
 	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
+	"github.com/70548887/sup-platform/internal/module/settlement"
 	"github.com/70548887/sup-platform/internal/module/tenant"
+	"github.com/70548887/sup-platform/internal/pkg/queue"
 	"github.com/70548887/sup-platform/internal/pkg/ratelimit"
 	pkgtenant "github.com/70548887/sup-platform/internal/pkg/tenant"
 	"github.com/70548887/sup-platform/migrations"
@@ -100,6 +105,18 @@ func New() (*App, error) {
 		// 供货商ID=1暂时硬编码，后续从数据库读取
 		adapterFactory.Register(1, yileAdapter)
 	}
+	// 注册易客适配器
+	yikeCfg := yike.LoadFromEnv()
+	if yikeCfg.AppId != "" {
+		yikeAdapter := yike.NewYikeAdapter(yikeCfg)
+		adapterFactory.Register(2, yikeAdapter) // 供货商ID=2
+	}
+	// 注册直客适配器
+	zhikeCfg := zhike.LoadFromEnv()
+	if zhikeCfg.AppId != "" {
+		zhikeAdapter := zhike.NewZhikeAdapter(zhikeCfg)
+		adapterFactory.Register(3, zhikeAdapter) // 供货商ID=3
+	}
 	dockingSvc := docking.NewDockingService(db, adapterFactory)
 
 	// 4.6 Phase 4A 服务初始化
@@ -122,6 +139,20 @@ func New() (*App, error) {
 		billingSvc.InitDefaultPlans(context.Background())
 	}
 
+	// 4.8 Phase 5 结算服务初始化
+	settlementSvc := settlement.NewSettlementService(db)
+
+	// 4.9 Phase 5 队列客户端初始化
+	var queueClient *queue.QueueClient
+	if cfg.Redis.Enabled && cfg.Redis.Addr != "" {
+		queueClient = queue.NewQueueClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
+		notifySvc.SetQueueClient(queueClient)
+		dockingSvc.SetQueueClient(queueClient)
+		log.Printf("[INFO] Queue client initialized: %s", cfg.Redis.Addr)
+	} else {
+		log.Printf("[WARN] Queue client disabled: Redis not available")
+	}
+
 	// 5. 设置路由
 	router := apphttp.SetupRouter(apphttp.RouterDeps{
 		DB:                 db,
@@ -142,6 +173,7 @@ func New() (*App, error) {
 		RateLimiter:        rateLimiter,
 		TenantSvc:          tenantSvc,
 		BillingSvc:         billingSvc,
+		SettlementSvc:      settlementSvc,
 		MultiTenantEnabled: cfg.MultiTenant.Enabled,
 	})
 
@@ -190,6 +222,10 @@ func loadConfig() *config.Config {
 		MultiTenant: config.MultiTenantConfig{
 			Enabled:         getEnv("MULTI_TENANT_ENABLED", "false") == "true",
 			DefaultTenantID: uint(getEnvInt("DEFAULT_TENANT_ID", 1)),
+		},
+		Security: config.SecurityConfig{
+			AllowedOrigins: strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"), ","),
+			TLSEnabled:     getEnv("TLS_ENABLED", "false") == "true",
 		},
 	}
 	return cfg

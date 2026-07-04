@@ -13,7 +13,21 @@ import (
 	"github.com/70548887/sup-platform/internal/module/order"
 )
 
-// ListOrders GET /admin/orders — 订单分页列表
+// ListOrders 订单分页列表
+// @Summary 订单分页列表
+// @Description 获取订单列表，支持状态/客户/供货商/时间筛选
+// @Tags Admin-订单管理
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "页码" default(1)
+// @Param size query int false "每页数量" default(20)
+// @Param status query int false "订单状态"
+// @Param customer_id query int false "客户ID"
+// @Param supplier_id query int false "供货商ID"
+// @Param start_time query int false "开始时间(时间戳)"
+// @Param end_time query int false "结束时间(时间戳)"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/orders [get]
 func (h *Handler) ListOrders(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
@@ -154,7 +168,15 @@ func (h *Handler) ListOrders(c *gin.Context) {
 	})
 }
 
-// GetOrder GET /admin/orders/:id — 订单详情
+// GetOrder 订单详情
+// @Summary 获取订单详情
+// @Description 根据ID获取订单详细信息，包含购买参数、卡密、对接信息
+// @Tags Admin-订单管理
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "订单ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/orders/{id} [get]
 func (h *Handler) GetOrder(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
@@ -210,7 +232,17 @@ func (h *Handler) GetOrder(c *gin.Context) {
 	response.Success(c, data)
 }
 
-// UpdateOrderStatus POST /admin/orders/:id/status — 手动状态变更
+// UpdateOrderStatus 手动状态变更
+// @Summary 修改订单状态
+// @Description 管理员手动变更订单状态
+// @Tags Admin-订单管理
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "订单ID"
+// @Param body body object true "状态{status,remark}"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/orders/{id}/status [post]
 func (h *Handler) UpdateOrderStatus(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {

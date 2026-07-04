@@ -3,6 +3,8 @@ package http
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"gorm.io/gorm"
 
 	"github.com/70548887/sup-platform/internal/config"
@@ -25,8 +27,11 @@ import (
 	"github.com/70548887/sup-platform/internal/module/recharge"
 	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
+	"github.com/70548887/sup-platform/internal/module/settlement"
 	"github.com/70548887/sup-platform/internal/module/tenant"
 	"github.com/70548887/sup-platform/internal/pkg/ratelimit"
+
+	_ "github.com/70548887/sup-platform/docs" // swagger docs
 )
 
 // RouterDeps 路由依赖（解决参数膨胀问题）
@@ -49,6 +54,7 @@ type RouterDeps struct {
 	RateLimiter        *ratelimit.RateLimiter
 	TenantSvc          *tenant.TenantService
 	BillingSvc         *billing.BillingService
+	SettlementSvc      *settlement.SettlementService
 	MultiTenantEnabled bool
 }
 
@@ -60,6 +66,15 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 
 	r := gin.Default()
 
+	// 安全响应头中间件
+	r.Use(middleware.SecurityHeaders())
+
+	// CORS跨域中间件
+	r.Use(middleware.CORSMiddleware(deps.Config.Security.AllowedOrigins))
+
+	// 输入净化中间件
+	r.Use(middleware.InputSanitizeMiddleware())
+
 	// 审计中间件：记录所有写操作(POST/PUT/DELETE/PATCH)
 	r.Use(audit.AuditMiddleware(deps.AuditSvc))
 
@@ -67,6 +82,9 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	r.GET("/health", func(c *gin.Context) {
 		response.Success(c, gin.H{"status": "ok"})
 	})
+
+	// Swagger API文档
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Legacy OpenAPI路由组（应用签名认证中间件）
 	legacyAuth := middleware.LegacyAuth(deps.DB, nil)
@@ -140,6 +158,7 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 			AnalyticsSvc:      deps.AnalyticsSvc,
 			BillingSvc:        deps.BillingSvc,
 			TenantSvc:         deps.TenantSvc,
+			SettlementSvc:     deps.SettlementSvc,
 		}
 
 		// 用户管理
@@ -217,6 +236,13 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 		adminGroup.GET("/billing/invoices", adminHandler.ListBillingInvoices)
 		adminGroup.POST("/billing/invoices/generate", adminHandler.GenerateInvoice)
 		adminGroup.POST("/billing/invoices/:id/mark-paid", adminHandler.MarkInvoicePaid)
+
+		// 结算管理
+		adminGroup.GET("/settlements", adminHandler.ListSettlements)
+		adminGroup.GET("/settlements/:id", adminHandler.GetSettlement)
+		adminGroup.POST("/settlements/generate", adminHandler.GenerateSettlement)
+		adminGroup.POST("/settlements/:id/confirm", adminHandler.ConfirmSettlement)
+		adminGroup.POST("/settlements/:id/paid", adminHandler.MarkSettlementPaid)
 	}
 
 	// 租户管理后台（仅多租户模式启用）

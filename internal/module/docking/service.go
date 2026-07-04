@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/70548887/sup-platform/internal/adapter"
+	"github.com/70548887/sup-platform/internal/pkg/queue"
 )
 
 // 指数退避重试间隔: 30s, 2min, 8min, 32min, 2h
@@ -25,9 +26,10 @@ var retryDelays = []time.Duration{
 
 // DockingService 订单对接服务
 type DockingService struct {
-	repo    *DockingRepository
-	db      *gorm.DB
-	factory *adapter.Factory
+	repo        *DockingRepository
+	db          *gorm.DB
+	factory     *adapter.Factory
+	queueClient *queue.QueueClient
 }
 
 // NewDockingService 创建DockingService
@@ -37,6 +39,11 @@ func NewDockingService(db *gorm.DB, factory *adapter.Factory) *DockingService {
 		db:      db,
 		factory: factory,
 	}
+}
+
+// SetQueueClient 设置队列客户端
+func (s *DockingService) SetQueueClient(qc *queue.QueueClient) {
+	s.queueClient = qc
 }
 
 // SubmitOrder 创建对接任务并异步提交订单到上游供货商
@@ -63,6 +70,17 @@ func (s *DockingService) SubmitOrder(ctx context.Context, orderID uint, supplier
 			return nil
 		}
 		return fmt.Errorf("docking: create task failed: %w", err)
+	}
+
+	// 优先使用队列
+	if s.queueClient != nil && s.queueClient.IsEnabled() {
+		qPayload := queue.DockingPayload{TaskID: task.ID, OrderSN: orderSN}
+		if enqErr := s.queueClient.Enqueue(ctx, queue.TypeDockingSubmit, qPayload); enqErr == nil {
+			return nil // 入队成功，不用goroutine
+		} else {
+			// 入队失败，降级到goroutine
+			log.Printf("[WARN] docking: enqueue failed, fallback to goroutine: %v", enqErr)
+		}
 	}
 
 	// 启动goroutine异步执行提交

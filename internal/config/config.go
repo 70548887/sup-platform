@@ -7,6 +7,7 @@ type Config struct {
 	Redis       RedisConfig       `yaml:"redis"`
 	JWT         JWTConfig         `yaml:"jwt"`
 	MultiTenant MultiTenantConfig `yaml:"multi_tenant"`
+	Security    SecurityConfig    `yaml:"security"`
 }
 
 type AppConfig struct {
@@ -41,4 +42,10 @@ type JWTConfig struct {
 type MultiTenantConfig struct {
 	Enabled         bool `yaml:"enabled"`
 	DefaultTenantID uint `yaml:"default_tenant_id"`
+}
+
+// SecurityConfig 安全配置
+type SecurityConfig struct {
+	AllowedOrigins []string `yaml:"allowed_origins"`
+	TLSEnabled     bool     `yaml:"tls_enabled"`
 }

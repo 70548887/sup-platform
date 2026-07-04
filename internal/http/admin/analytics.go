@@ -21,7 +21,14 @@ func (h *Handler) analyticsService() *analytics.AnalyticsService {
 
 // __END__
 
-// GetDashboard GET /admin/analytics/dashboard — 综合大盘
+// GetDashboard 综合大盘
+// @Summary 获取综合大盘数据
+// @Description 获取平台综合统计数据（订单数、交易额、用户数等）
+// @Tags Admin-数据统计
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/analytics/dashboard [get]
 func (h *Handler) GetDashboard(c *gin.Context) {
 	svc := h.analyticsService()
 	dash, err := svc.GetDashboard(c.Request.Context())

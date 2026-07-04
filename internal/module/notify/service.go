@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/70548887/sup-platform/internal/module/order"
+	"github.com/70548887/sup-platform/internal/pkg/queue"
 )
 
 // 指数退避重试间隔: 30s, 2min, 8min, 32min, 2h
@@ -31,8 +32,9 @@ const (
 
 // NotifyService 通知投递服务
 type NotifyService struct {
-	repo *NotifyRepository
-	db   *gorm.DB
+	repo        *NotifyRepository
+	db          *gorm.DB
+	queueClient *queue.QueueClient
 }
 
 // NewNotifyService 创建NotifyService
@@ -41,6 +43,11 @@ func NewNotifyService(db *gorm.DB) *NotifyService {
 		repo: NewNotifyRepository(db),
 		db:   db,
 	}
+}
+
+// SetQueueClient 设置队列客户端
+func (s *NotifyService) SetQueueClient(qc *queue.QueueClient) {
+	s.queueClient = qc
 }
 
 // callbackPayload 通知负载
@@ -84,6 +91,17 @@ func (s *NotifyService) SendOrderCallback(ctx context.Context, ord *order.Order,
 	}
 	if err := s.repo.CreateCallback(ctx, cb); err != nil {
 		return fmt.Errorf("notify: create callback record failed: %w", err)
+	}
+
+	// 优先使用队列
+	if s.queueClient != nil && s.queueClient.IsEnabled() {
+		qPayload := queue.WebhookPayload{CallbackID: cb.ID, URL: ord.NotifyURL, Body: string(payloadBytes)}
+		if enqErr := s.queueClient.Enqueue(ctx, queue.TypeWebhookDeliver, qPayload); enqErr == nil {
+			return nil // 入队成功，不用goroutine
+		} else {
+			// 入队失败，降级到goroutine
+			log.Printf("[WARN] notify: enqueue failed, fallback to goroutine: %v", enqErr)
+		}
 	}
 
 	// 启动goroutine异步投递

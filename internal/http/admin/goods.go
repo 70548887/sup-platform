@@ -12,7 +12,19 @@ import (
 	"github.com/70548887/sup-platform/internal/module/goods"
 )
 
-// ListGoods GET /admin/goods — 商品列表
+// ListGoods 商品列表
+// @Summary 商品分页列表
+// @Description 获取商品列表，支持状态/供货商/关键字筛选
+// @Tags Admin-商品管理
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "页码" default(1)
+// @Param size query int false "每页数量" default(20)
+// @Param status query int false "商品状态"
+// @Param supplier_id query int false "供货商ID"
+// @Param keyword query string false "关键字搜索"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/goods [get]
 func (h *Handler) ListGoods(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))

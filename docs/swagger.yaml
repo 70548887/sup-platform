@@ -1,0 +1,413 @@
+basePath: /
+host: localhost:8080
+info:
+  contact: {}
+  description: SUP平台后端API文档，覆盖管理端、租户端、供货商端、客户端全部接口
+  title: SUP聚合供货平台 API
+  version: "1.0"
+paths:
+  /admin/analytics/dashboard:
+    get:
+      description: 获取平台综合统计数据（订单数、交易额、用户数等）
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 获取综合大盘数据
+      tags:
+      - Admin-数据统计
+  /admin/billing/plans:
+    get:
+      description: 获取所有可用的计费套餐
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 获取计费套餐列表
+      tags:
+      - Admin-计费管理
+  /admin/goods:
+    get:
+      description: 获取商品列表，支持状态/供货商/关键字筛选
+      parameters:
+      - default: 1
+        description: 页码
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: 每页数量
+        in: query
+        name: size
+        type: integer
+      - description: 商品状态
+        in: query
+        name: status
+        type: integer
+      - description: 供货商ID
+        in: query
+        name: supplier_id
+        type: integer
+      - description: 关键字搜索
+        in: query
+        name: keyword
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 商品分页列表
+      tags:
+      - Admin-商品管理
+  /admin/orders:
+    get:
+      description: 获取订单列表，支持状态/客户/供货商/时间筛选
+      parameters:
+      - default: 1
+        description: 页码
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: 每页数量
+        in: query
+        name: size
+        type: integer
+      - description: 订单状态
+        in: query
+        name: status
+        type: integer
+      - description: 客户ID
+        in: query
+        name: customer_id
+        type: integer
+      - description: 供货商ID
+        in: query
+        name: supplier_id
+        type: integer
+      - description: 开始时间(时间戳)
+        in: query
+        name: start_time
+        type: integer
+      - description: 结束时间(时间戳)
+        in: query
+        name: end_time
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 订单分页列表
+      tags:
+      - Admin-订单管理
+  /admin/orders/{id}:
+    get:
+      description: 根据ID获取订单详细信息，包含购买参数、卡密、对接信息
+      parameters:
+      - description: 订单ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 获取订单详情
+      tags:
+      - Admin-订单管理
+  /admin/orders/{id}/status:
+    post:
+      consumes:
+      - application/json
+      description: 管理员手动变更订单状态
+      parameters:
+      - description: 订单ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 状态{status,remark}
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 修改订单状态
+      tags:
+      - Admin-订单管理
+  /admin/settlements:
+    get:
+      description: 获取结算单列表，支持按供货商筛选
+      parameters:
+      - default: 1
+        description: 页码
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: 每页数量
+        in: query
+        name: size
+        type: integer
+      - description: 供货商ID
+        in: query
+        name: supplier_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 结算单分页列表
+      tags:
+      - Admin-结算管理
+  /admin/settlements/{id}:
+    get:
+      description: 根据ID获取结算单详细信息
+      parameters:
+      - description: 结算单ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 获取结算单详情
+      tags:
+      - Admin-结算管理
+  /admin/settlements/{id}/confirm:
+    post:
+      description: 将结算单状态从pending变更为confirmed
+      parameters:
+      - description: 结算单ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 确认结算单
+      tags:
+      - Admin-结算管理
+  /admin/settlements/{id}/paid:
+    post:
+      description: 将结算单状态从confirmed变更为paid
+      parameters:
+      - description: 结算单ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 标记结算已付款
+      tags:
+      - Admin-结算管理
+  /admin/settlements/generate:
+    post:
+      consumes:
+      - application/json
+      description: 根据供货商和月份生成结算单
+      parameters:
+      - description: 生成参数{supplier_id,period}
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 生成结算单
+      tags:
+      - Admin-结算管理
+  /admin/users:
+    get:
+      description: 获取所有用户列表，支持按角色筛选
+      parameters:
+      - default: 1
+        description: 页码
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: 每页数量
+        in: query
+        name: size
+        type: integer
+      - description: 角色筛选(admin/supplier/customer)
+        in: query
+        name: role
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 用户分页列表
+      tags:
+      - Admin-用户管理
+    post:
+      consumes:
+      - application/json
+      description: 管理员创建新用户（admin/supplier/customer）
+      parameters:
+      - description: 用户信息{username,password,nickname,email,phone,role}
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 创建新用户
+      tags:
+      - Admin-用户管理
+  /admin/users/{id}:
+    get:
+      description: 根据ID获取用户详细信息
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 获取用户详情
+      tags:
+      - Admin-用户管理
+  /admin/users/{id}/status:
+    patch:
+      consumes:
+      - application/json
+      description: 启用或禁用指定用户
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: '状态{status: 0|禁用 1|启用}'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 修改用户状态
+      tags:
+      - Admin-用户管理
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

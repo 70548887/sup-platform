@@ -13,7 +13,16 @@ import (
 	"github.com/70548887/sup-platform/internal/module/audit"
 )
 
-// CreateUser POST /admin/users — 创建用户
+// CreateUser 创建用户
+// @Summary 创建新用户
+// @Description 管理员创建新用户（admin/supplier/customer）
+// @Tags Admin-用户管理
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body object true "用户信息{username,password,nickname,email,phone,role}"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/users [post]
 func (h *Handler) CreateUser(c *gin.Context) {
 	var req struct {
 		Username string `json:"username" binding:"required"`
@@ -96,7 +105,17 @@ func (h *Handler) CreateUser(c *gin.Context) {
 	})
 }
 
-// ListUsers GET /admin/users — 用户列表
+// ListUsers 用户列表
+// @Summary 用户分页列表
+// @Description 获取所有用户列表，支持按角色筛选
+// @Tags Admin-用户管理
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "页码" default(1)
+// @Param size query int false "每页数量" default(20)
+// @Param role query string false "角色筛选(admin/supplier/customer)"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/users [get]
 func (h *Handler) ListUsers(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
@@ -170,7 +189,15 @@ func (h *Handler) ListUsers(c *gin.Context) {
 	})
 }
 
-// GetUser GET /admin/users/:id — 用户详情
+// GetUser 用户详情
+// @Summary 获取用户详情
+// @Description 根据ID获取用户详细信息
+// @Tags Admin-用户管理
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "用户ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/users/{id} [get]
 func (h *Handler) GetUser(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
@@ -197,7 +224,17 @@ func (h *Handler) GetUser(c *gin.Context) {
 	})
 }
 
-// UpdateUserStatus PATCH /admin/users/:id/status — 启用/禁用用户
+// UpdateUserStatus 启用/禁用用户
+// @Summary 修改用户状态
+// @Description 启用或禁用指定用户
+// @Tags Admin-用户管理
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "用户ID"
+// @Param body body object true "状态{status: 0|禁用 1|启用}"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/users/{id}/status [patch]
 func (h *Handler) UpdateUserStatus(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {

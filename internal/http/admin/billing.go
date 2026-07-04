@@ -14,7 +14,14 @@ import (
 	"github.com/70548887/sup-platform/internal/module/billing"
 )
 
-// ListBillingPlans GET /admin/billing/plans — 套餐列表
+// ListBillingPlans 套餐列表
+// @Summary 获取计费套餐列表
+// @Description 获取所有可用的计费套餐
+// @Tags Admin-计费管理
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/billing/plans [get]
 func (h *Handler) ListBillingPlans(c *gin.Context) {
 	if h.BillingSvc == nil {
 		response.Error(c, "计费服务未启用")

@@ -18,6 +18,7 @@ import (
 	"github.com/70548887/sup-platform/internal/module/recharge"
 	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
+	"github.com/70548887/sup-platform/internal/module/settlement"
 	"github.com/70548887/sup-platform/internal/module/tenant"
 )
 
@@ -36,6 +37,7 @@ type Handler struct {
 	AnalyticsSvc      *analytics.AnalyticsService
 	BillingSvc        *billing.BillingService
 	TenantSvc         *tenant.TenantService
+	SettlementSvc     *settlement.SettlementService
 }
 
 // getAdminUserID 从JWT Context中获取管理员用户ID

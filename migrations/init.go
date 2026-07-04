@@ -18,6 +18,7 @@ import (
 	"github.com/70548887/sup-platform/internal/module/recharge"
 	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
+	"github.com/70548887/sup-platform/internal/module/settlement"
 	"github.com/70548887/sup-platform/internal/module/tenant"
 )
 
@@ -69,6 +70,10 @@ func RunAll(db *gorm.DB) error {
 	}
 	if err := billing.Migrate(db); err != nil {
 		return fmt.Errorf("billing migrate: %w", err)
+	}
+	// Phase 5 结算模块迁移
+	if err := settlement.Migrate(db); err != nil {
+		return fmt.Errorf("settlement migrate: %w", err)
 	}
 	// 多租户数据迁移：确保现有数据tenant_id=1
 	if err := tenant.MigrateExistingData(db); err != nil {
