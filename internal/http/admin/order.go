@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/70548887/sup-platform/internal/http/response"
+	"github.com/70548887/sup-platform/internal/module/account"
 	"github.com/70548887/sup-platform/internal/module/audit"
 	"github.com/70548887/sup-platform/internal/module/order"
 )
@@ -85,6 +86,24 @@ func (h *Handler) ListOrders(c *gin.Context) {
 		return
 	}
 
+	// 批量查询供货商名称
+	supplierIDs := make([]uint, 0, len(orders))
+	for _, o := range orders {
+		supplierIDs = append(supplierIDs, o.SupplierID)
+	}
+	supplierNames := make(map[uint]string)
+	if len(supplierIDs) > 0 {
+		var users []account.User
+		h.DB.Select("id", "nickname", "username").Where("id IN ?", supplierIDs).Find(&users)
+		for _, u := range users {
+			name := u.Nickname
+			if name == "" {
+				name = u.Username
+			}
+			supplierNames[u.ID] = name
+		}
+	}
+
 	// 构造返回数据
 	type orderItem struct {
 		ID              uint   `json:"id"`
@@ -92,6 +111,7 @@ func (h *Handler) ListOrders(c *gin.Context) {
 		CustomerOrderID string `json:"customer_order_id"`
 		CustomerID      uint   `json:"customer_id"`
 		SupplierID      uint   `json:"supplier_id"`
+		SupplierName    string `json:"supplier_name"`
 		GoodsID         uint   `json:"goods_id"`
 		GoodsSN         string `json:"goods_sn"`
 		GoodsName       string `json:"goods_name"`
@@ -112,6 +132,7 @@ func (h *Handler) ListOrders(c *gin.Context) {
 			CustomerOrderID: o.CustomerOrderID,
 			CustomerID:      o.CustomerID,
 			SupplierID:      o.SupplierID,
+			SupplierName:    supplierNames[o.SupplierID],
 			GoodsID:         o.GoodsID,
 			GoodsSN:         o.GoodsSN,
 			GoodsName:       o.GoodsName,
@@ -146,7 +167,7 @@ func (h *Handler) GetOrder(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, gin.H{
+	data := gin.H{
 		"id":                ord.ID,
 		"order_sn":          ord.OrderSN,
 		"customer_order_id": ord.CustomerOrderID,
@@ -168,7 +189,25 @@ func (h *Handler) GetOrder(c *gin.Context) {
 		"completed_at":      ord.CompletedAt,
 		"created_at":        ord.CreatedAt,
 		"updated_at":        ord.UpdatedAt,
-	})
+	}
+
+	// 查询对接任务信息
+	if h.DockingSvc != nil {
+		task, err := h.DockingSvc.GetByOrderID(context.Background(), ord.ID)
+		if err == nil && task != nil {
+			data["docking"] = gin.H{
+				"task_id":           task.ID,
+				"status":            task.Status,
+				"external_order_id": task.ExternalOrderID,
+				"retry_count":       task.RetryCount,
+				"error_message":     task.ErrorMessage,
+				"submitted_at":      task.SubmittedAt,
+				"created_at":        task.CreatedAt,
+			}
+		}
+	}
+
+	response.Success(c, data)
 }
 
 // UpdateOrderStatus POST /admin/orders/:id/status — 手动状态变更

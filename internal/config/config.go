@@ -27,6 +27,8 @@ type RedisConfig struct {
 	Addr     string `yaml:"addr"`
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
+	Enabled  bool   `yaml:"enabled"`
+	Prefix   string `yaml:"prefix"`
 }
 
 type JWTConfig struct {

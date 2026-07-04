@@ -16,15 +16,17 @@ import (
 	"github.com/70548887/sup-platform/internal/module/goods"
 	"github.com/70548887/sup-platform/internal/module/ledger"
 	"github.com/70548887/sup-platform/internal/module/order"
+	"github.com/70548887/sup-platform/internal/module/pricing"
 )
 
 // Handler 客户端API处理器
 type Handler struct {
-	DB        *gorm.DB
-	GoodsSvc  *goods.GoodsService
-	OrderSvc  *order.OrderService
-	CardSvc   *card.CardService
-	LedgerSvc *ledger.LedgerService
+	DB         *gorm.DB
+	GoodsSvc   *goods.GoodsService
+	OrderSvc   *order.OrderService
+	CardSvc    *card.CardService
+	LedgerSvc  *ledger.LedgerService
+	PricingSvc *pricing.PricingService
 }
 
 // AccountShow GET /openapi/customer/CustomerAccount/Show — 账户信息
@@ -269,7 +271,16 @@ func (h *Handler) GoodsBuy(c *gin.Context) {
 		appIDUint = userID
 	}
 
-	// 5. 创建订单
+	// 5. 定价计算：尝试使用PricingService计算最终价格，失败则回退基础价
+	unitPrice := g.Price
+	if h.PricingSvc != nil {
+		if calculated, err := h.PricingSvc.CalculatePrice(ctx, g.ID, userID, req.BuyNumber, g.Price); err == nil {
+			unitPrice = calculated
+		}
+		// 定价失败不阻塞下单，回退基础价
+	}
+
+	// 6. 创建订单
 	orderParams := order.CreateOrderParams{
 		AppID:           appIDUint,
 		CustomerID:      userID,
@@ -279,7 +290,7 @@ func (h *Handler) GoodsBuy(c *gin.Context) {
 		GoodsSN:         g.SerialNumber,
 		GoodsName:       g.Name,
 		BuyNumber:       req.BuyNumber,
-		UnitPrice:       g.Price,
+		UnitPrice:       unitPrice,
 		BuyParams:       req.BuyParams,
 	}
 
@@ -289,7 +300,7 @@ func (h *Handler) GoodsBuy(c *gin.Context) {
 		return
 	}
 
-	// 6. 如果是卡密商品，发放卡密
+	// 7. 如果是卡密商品，发放卡密
 	var cardContents []string
 	if g.IsCardProduct {
 		cards, err := h.CardSvc.IssueCards(ctx, h.DB, g.ID, ord.ID, req.BuyNumber)
@@ -383,15 +394,15 @@ func (h *Handler) OrderShow(c *gin.Context) {
 	}
 
 	data := gin.H{
-		"order_sn":        ord.OrderSN,
-		"goods_sn":        ord.GoodsSN,
-		"buy_number":      ord.BuyNumber,
-		"amount":          ord.Amount.StringFixed(2),
-		"refund_amount":   ord.RefundAmount.StringFixed(2),
-		"status":          ord.Status,
-		"card_code_ids":   cardContents,
+		"order_sn":         ord.OrderSN,
+		"goods_sn":         ord.GoodsSN,
+		"buy_number":       ord.BuyNumber,
+		"amount":           ord.Amount.StringFixed(2),
+		"refund_amount":    ord.RefundAmount.StringFixed(2),
+		"status":           ord.Status,
+		"card_code_ids":    cardContents,
 		"buy_params_value": buyParamsValue,
-		"created_at":      ord.CreatedAt,
+		"created_at":       ord.CreatedAt,
 	}
 	if ord.PaidAt != nil {
 		data["paid_at"] = *ord.PaidAt

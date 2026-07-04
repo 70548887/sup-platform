@@ -2,6 +2,7 @@ package http
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/70548887/sup-platform/internal/config"
@@ -10,6 +11,7 @@ import (
 	"github.com/70548887/sup-platform/internal/http/openapi/customer"
 	"github.com/70548887/sup-platform/internal/http/openapi/supplier"
 	"github.com/70548887/sup-platform/internal/http/response"
+	"github.com/70548887/sup-platform/internal/module/analytics"
 	"github.com/70548887/sup-platform/internal/module/audit"
 	"github.com/70548887/sup-platform/internal/module/auth"
 	"github.com/70548887/sup-platform/internal/module/card"
@@ -17,23 +19,31 @@ import (
 	"github.com/70548887/sup-platform/internal/module/goods"
 	"github.com/70548887/sup-platform/internal/module/ledger"
 	"github.com/70548887/sup-platform/internal/module/order"
+	"github.com/70548887/sup-platform/internal/module/pricing"
 	"github.com/70548887/sup-platform/internal/module/recharge"
+	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
+	"github.com/70548887/sup-platform/internal/pkg/ratelimit"
 )
 
 // RouterDeps 路由依赖（解决参数膨胀问题）
 type RouterDeps struct {
-	DB          *gorm.DB
-	Config      *config.Config
-	GoodsSvc    *goods.GoodsService
-	OrderSvc    *order.OrderService
-	CardSvc     *card.CardService
-	LedgerSvc   *ledger.LedgerService
-	AuditSvc    *audit.AuditService
-	RechargeSvc *recharge.RechargeService
-	DockingSvc  *docking.DockingService
-	RefundSvc   *refund.RefundService
-	AuthSvc     *auth.AuthService
+	DB                *gorm.DB
+	Config            *config.Config
+	GoodsSvc          *goods.GoodsService
+	OrderSvc          *order.OrderService
+	CardSvc           *card.CardService
+	LedgerSvc         *ledger.LedgerService
+	AuditSvc          *audit.AuditService
+	RechargeSvc       *recharge.RechargeService
+	DockingSvc        *docking.DockingService
+	RefundSvc         *refund.RefundService
+	AuthSvc           *auth.AuthService
+	RedisClient       *redis.Client
+	PricingSvc        *pricing.PricingService
+	AnalyticsSvc      *analytics.AnalyticsService
+	ReconciliationSvc *reconciliation.ReconciliationService
+	RateLimiter       *ratelimit.RateLimiter
 }
 
 // SetupRouter 初始化并返回配置好的路由引擎
@@ -58,13 +68,15 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	// 客户端API
 	customerGroup := r.Group("/openapi/customer")
 	customerGroup.Use(legacyAuth)
+	customerGroup.Use(middleware.RateLimitMiddleware(deps.RateLimiter, deps.DB))
 	{
 		customerHandler := &customer.Handler{
-			DB:        deps.DB,
-			GoodsSvc:  deps.GoodsSvc,
-			OrderSvc:  deps.OrderSvc,
-			CardSvc:   deps.CardSvc,
-			LedgerSvc: deps.LedgerSvc,
+			DB:         deps.DB,
+			GoodsSvc:   deps.GoodsSvc,
+			OrderSvc:   deps.OrderSvc,
+			CardSvc:    deps.CardSvc,
+			LedgerSvc:  deps.LedgerSvc,
+			PricingSvc: deps.PricingSvc,
 		}
 		customerGroup.GET("/CustomerAccount/Show", customerHandler.AccountShow)
 		customerGroup.GET("/Goods/CategoryList", customerHandler.GoodsCategoryList)
@@ -78,6 +90,7 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	// 供货端API
 	supplierGroup := r.Group("/openapi/supplier")
 	supplierGroup.Use(legacyAuth)
+	supplierGroup.Use(middleware.RateLimitMiddleware(deps.RateLimiter, deps.DB))
 	{
 		supplierHandler := &supplier.Handler{
 			DB:       deps.DB,
@@ -100,14 +113,17 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	adminGroup.Use(middleware.JWTAuthWithRole(deps.AuthSvc, "admin"))
 	{
 		adminHandler := &admin.Handler{
-			DB:          deps.DB,
-			GoodsSvc:    deps.GoodsSvc,
-			OrderSvc:    deps.OrderSvc,
-			LedgerSvc:   deps.LedgerSvc,
-			AuditSvc:    deps.AuditSvc,
-			RefundSvc:   deps.RefundSvc,
-			RechargeSvc: deps.RechargeSvc,
-			DockingSvc:  deps.DockingSvc,
+			DB:                deps.DB,
+			GoodsSvc:          deps.GoodsSvc,
+			OrderSvc:          deps.OrderSvc,
+			LedgerSvc:         deps.LedgerSvc,
+			AuditSvc:          deps.AuditSvc,
+			RefundSvc:         deps.RefundSvc,
+			RechargeSvc:       deps.RechargeSvc,
+			DockingSvc:        deps.DockingSvc,
+			PricingSvc:        deps.PricingSvc,
+			ReconciliationSvc: deps.ReconciliationSvc,
+			AnalyticsSvc:      deps.AnalyticsSvc,
 		}
 
 		// 用户管理
@@ -145,6 +161,38 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 
 		// 审计日志
 		adminGroup.GET("/audit", adminHandler.ListAuditLogs)
+
+		// 定价规则管理
+		adminGroup.POST("/pricing/rules", adminHandler.CreatePricingRule)
+		adminGroup.GET("/pricing/rules", adminHandler.ListPricingRules)
+		adminGroup.PUT("/pricing/rules/:id", adminHandler.UpdatePricingRule)
+		adminGroup.DELETE("/pricing/rules/:id", adminHandler.DeletePricingRule)
+		adminGroup.POST("/pricing/calc-preview", adminHandler.CalcPricePreview)
+
+		// 客户分组管理
+		adminGroup.POST("/customer-groups", adminHandler.CreateCustomerGroup)
+		adminGroup.GET("/customer-groups", adminHandler.ListCustomerGroups)
+		adminGroup.POST("/customer-groups/:id/members", adminHandler.AddGroupMember)
+		adminGroup.DELETE("/customer-groups/:id/members/:memberId", adminHandler.RemoveGroupMember)
+
+		// API限流管理
+		adminGroup.GET("/api-apps", adminHandler.ListApiApps)
+		adminGroup.PATCH("/api-apps/:id/rate-limit", adminHandler.UpdateRateLimit)
+		adminGroup.GET("/api-apps/:id/usage", adminHandler.GetAppUsage)
+
+		// 对账系统
+		adminGroup.POST("/reconciliation/run", adminHandler.RunReconciliation)
+		adminGroup.GET("/reconciliation/tasks", adminHandler.ListReconciliationTasks)
+		adminGroup.GET("/reconciliation/tasks/:id", adminHandler.GetReconciliationTask)
+		adminGroup.PATCH("/reconciliation/errors/:id", adminHandler.ResolveReconciliationError)
+
+		// 数据统计
+		adminGroup.GET("/analytics/dashboard", adminHandler.GetDashboard)
+		adminGroup.GET("/analytics/revenue-trend", adminHandler.GetRevenueTrend)
+		adminGroup.GET("/analytics/hot-goods", adminHandler.GetHotGoods)
+		adminGroup.GET("/analytics/order-stats", adminHandler.GetOrderStats)
+		adminGroup.GET("/analytics/customer-stats", adminHandler.GetCustomerStats)
+		adminGroup.POST("/analytics/aggregate", adminHandler.TriggerAggregate)
 	}
 
 	return r

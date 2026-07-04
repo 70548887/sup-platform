@@ -7,25 +7,31 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/70548887/sup-platform/internal/http/response"
+	"github.com/70548887/sup-platform/internal/module/analytics"
 	"github.com/70548887/sup-platform/internal/module/audit"
 	"github.com/70548887/sup-platform/internal/module/docking"
 	"github.com/70548887/sup-platform/internal/module/goods"
 	"github.com/70548887/sup-platform/internal/module/ledger"
 	"github.com/70548887/sup-platform/internal/module/order"
+	"github.com/70548887/sup-platform/internal/module/pricing"
 	"github.com/70548887/sup-platform/internal/module/recharge"
+	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
 )
 
 // Handler Admin管理后台处理器
 type Handler struct {
-	DB          *gorm.DB
-	GoodsSvc    *goods.GoodsService
-	OrderSvc    *order.OrderService
-	LedgerSvc   *ledger.LedgerService
-	AuditSvc    *audit.AuditService
-	RefundSvc   *refund.RefundService
-	RechargeSvc *recharge.RechargeService
-	DockingSvc  *docking.DockingService
+	DB                *gorm.DB
+	GoodsSvc          *goods.GoodsService
+	OrderSvc          *order.OrderService
+	LedgerSvc         *ledger.LedgerService
+	AuditSvc          *audit.AuditService
+	RefundSvc         *refund.RefundService
+	RechargeSvc       *recharge.RechargeService
+	DockingSvc        *docking.DockingService
+	PricingSvc        *pricing.PricingService
+	ReconciliationSvc *reconciliation.ReconciliationService
+	AnalyticsSvc      *analytics.AnalyticsService
 }
 
 // getAdminUserID 从JWT Context中获取管理员用户ID

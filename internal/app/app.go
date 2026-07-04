@@ -1,11 +1,15 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -14,6 +18,7 @@ import (
 	"github.com/70548887/sup-platform/internal/adapter/yile"
 	"github.com/70548887/sup-platform/internal/config"
 	apphttp "github.com/70548887/sup-platform/internal/http"
+	"github.com/70548887/sup-platform/internal/module/analytics"
 	"github.com/70548887/sup-platform/internal/module/audit"
 	"github.com/70548887/sup-platform/internal/module/auth"
 	"github.com/70548887/sup-platform/internal/module/card"
@@ -22,8 +27,11 @@ import (
 	"github.com/70548887/sup-platform/internal/module/ledger"
 	"github.com/70548887/sup-platform/internal/module/notify"
 	"github.com/70548887/sup-platform/internal/module/order"
+	"github.com/70548887/sup-platform/internal/module/pricing"
 	"github.com/70548887/sup-platform/internal/module/recharge"
+	"github.com/70548887/sup-platform/internal/module/reconciliation"
 	"github.com/70548887/sup-platform/internal/module/refund"
+	"github.com/70548887/sup-platform/internal/pkg/ratelimit"
 	"github.com/70548887/sup-platform/migrations"
 )
 
@@ -50,6 +58,9 @@ func New() (*App, error) {
 	if err := migrations.RunAll(db); err != nil {
 		return nil, fmt.Errorf("auto migrate failed: %w", err)
 	}
+
+	// 3.5 连接Redis（降级模式：连接失败不影响启动）
+	redisClient := connectRedis(cfg)
 
 	// 4. 初始化各Service
 	ledgerSvc := ledger.NewLedgerService(db)
@@ -82,19 +93,36 @@ func New() (*App, error) {
 	}
 	dockingSvc := docking.NewDockingService(db, adapterFactory)
 
+	// 4.6 Phase 4A 服务初始化
+	pricingSvc := pricing.NewPricingService(db, redisClient, cfg.Redis.Prefix)
+	analyticsSvc := analytics.NewAnalyticsService(db, redisClient, cfg.Redis.Prefix)
+	reconciliationSvc := reconciliation.NewReconciliationService(db)
+	rateLimiter := ratelimit.NewRateLimiter(redisClient)
+	if redisClient != nil {
+		ctx := context.Background()
+		if err := rateLimiter.LoadScript(ctx); err != nil {
+			log.Printf("[WARN] Rate limiter script load failed: %v", err)
+		}
+	}
+
 	// 5. 设置路由
 	router := apphttp.SetupRouter(apphttp.RouterDeps{
-		DB:          db,
-		Config:      cfg,
-		GoodsSvc:    goodsSvc,
-		OrderSvc:    orderSvc,
-		CardSvc:     cardSvc,
-		LedgerSvc:   ledgerSvc,
-		AuditSvc:    auditSvc,
-		RechargeSvc: rechargeSvc,
-		DockingSvc:  dockingSvc,
-		RefundSvc:   refundSvc,
-		AuthSvc:     authSvc,
+		DB:                db,
+		Config:            cfg,
+		GoodsSvc:          goodsSvc,
+		OrderSvc:          orderSvc,
+		CardSvc:           cardSvc,
+		LedgerSvc:         ledgerSvc,
+		AuditSvc:          auditSvc,
+		RechargeSvc:       rechargeSvc,
+		DockingSvc:        dockingSvc,
+		RefundSvc:         refundSvc,
+		AuthSvc:           authSvc,
+		RedisClient:       redisClient,
+		PricingSvc:        pricingSvc,
+		AnalyticsSvc:      analyticsSvc,
+		ReconciliationSvc: reconciliationSvc,
+		RateLimiter:       rateLimiter,
 	})
 
 	return &App{
@@ -132,6 +160,8 @@ func loadConfig() *config.Config {
 			Addr:     getEnv("REDIS_ADDR", "127.0.0.1:6379"),
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       getEnvInt("REDIS_DB", 0),
+			Enabled:  getEnv("REDIS_ENABLED", "true") == "true",
+			Prefix:   getEnv("REDIS_PREFIX", "sup"),
 		},
 		JWT: config.JWTConfig{
 			Secret: getEnv("JWT_SECRET", "sup-platform-secret-key"),
@@ -164,6 +194,32 @@ func connectDB(cfg *config.Config) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+// connectRedis 连接Redis，失败返回nil（降级模式）
+func connectRedis(cfg *config.Config) *redis.Client {
+	if !cfg.Redis.Enabled {
+		log.Printf("[WARN] Redis is disabled, running in degraded mode")
+		return nil
+	}
+	client := redis.NewClient(&redis.Options{
+		Addr:         cfg.Redis.Addr,
+		Password:     cfg.Redis.Password,
+		DB:           cfg.Redis.DB,
+		PoolSize:     50,
+		MinIdleConns: 10,
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		log.Printf("[WARN] Redis connection failed: %v, running in degraded mode", err)
+		return nil
+	}
+	log.Printf("[INFO] Redis connected successfully: %s", cfg.Redis.Addr)
+	return client
 }
 
 // getEnv 获取环境变量，不存在则返回默认值
