@@ -3,22 +3,27 @@ package card
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"gorm.io/gorm"
+
+	"github.com/70548887/sup-platform/internal/pkg/crypto"
 )
 
 // CardService 卡密服务层
 type CardService struct {
-	repo *CardRepository
-	db   *gorm.DB
+	repo       *CardRepository
+	db         *gorm.DB
+	encryptKey []byte // AES-GCM 加密密钥（32字节）
 }
 
 // NewCardService 创建卡密服务实例
-func NewCardService(db *gorm.DB) *CardService {
+func NewCardService(db *gorm.DB, encryptKey []byte) *CardService {
 	return &CardService{
-		repo: NewCardRepository(db),
-		db:   db,
+		repo:       NewCardRepository(db),
+		db:         db,
+		encryptKey: encryptKey,
 	}
 }
 
@@ -63,10 +68,18 @@ func (s *CardService) ImportCards(ctx context.Context, goodsID uint, batchName s
 		// 2. 批量创建卡密记录
 		cards := make([]*Card, 0, len(validContents))
 		for _, content := range validContents {
+			storeContent := content
+			if len(s.encryptKey) > 0 {
+				encrypted, err := crypto.EncryptCardContent(content, s.encryptKey)
+				if err != nil {
+					return fmt.Errorf("加密卡密内容失败: %w", err)
+				}
+				storeContent = encrypted
+			}
 			cards = append(cards, &Card{
 				BatchID: batch.ID,
 				GoodsID: goodsID,
-				Content: content,
+				Content: storeContent,
 				Status:  1, // 可用
 			})
 		}
@@ -161,6 +174,7 @@ func (s *CardService) IssueCards(ctx context.Context, tx *gorm.DB, goodsID uint,
 		return nil, fmt.Errorf("可用卡密不足，需要 %d 张，实际可发放 %d 张", quantity, len(issued))
 	}
 
+	s.decryptCards(issued)
 	return issued, nil
 }
 
@@ -171,5 +185,25 @@ func (s *CardService) GetAvailableCount(ctx context.Context, goodsID uint) (int6
 
 // GetOrderCards 获取订单的卡密
 func (s *CardService) GetOrderCards(ctx context.Context, orderID uint) ([]*Card, error) {
-	return s.repo.FindByOrder(ctx, orderID)
+	cards, err := s.repo.FindByOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	s.decryptCards(cards)
+	return cards, nil
+}
+
+// decryptCards 解密卡密列表的 Content 字段
+func (s *CardService) decryptCards(cards []*Card) {
+	if len(s.encryptKey) == 0 {
+		return
+	}
+	for _, c := range cards {
+		plain, err := crypto.DecryptCardContent(c.Content, s.encryptKey)
+		if err != nil {
+			log.Printf("[WARN] decrypt card %d failed: %v", c.ID, err)
+			continue
+		}
+		c.Content = plain
+	}
 }

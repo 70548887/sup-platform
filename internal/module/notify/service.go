@@ -110,6 +110,16 @@ func (s *NotifyService) SendOrderCallback(ctx context.Context, ord *order.Order,
 	return nil
 }
 
+// DeliverCallback 公开方法：根据callbackID查找记录并执行投递（供Worker调用）
+func (s *NotifyService) DeliverCallback(ctx context.Context, callbackID uint) error {
+	cb, err := s.repo.GetCallbackByID(ctx, callbackID)
+	if err != nil {
+		return fmt.Errorf("notify: get callback %d failed: %w", callbackID, err)
+	}
+	s.deliverCallback(cb.ID, cb.URL, cb.Payload)
+	return nil
+}
+
 // deliverCallback 执行HTTP POST投递
 // 1. HTTP POST到url，超时10秒
 // 2. 记录StatusCode和Response

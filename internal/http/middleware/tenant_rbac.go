@@ -1,10 +1,9 @@
 package middleware
 
 import (
-	"net/http"
-
 	"github.com/gin-gonic/gin"
 
+	"github.com/70548887/sup-platform/internal/http/response"
 	tenantModule "github.com/70548887/sup-platform/internal/module/tenant"
 )
 
@@ -20,11 +19,7 @@ func TenantRBACMiddleware(tenantSvc *tenantModule.TenantService) gin.HandlerFunc
 			}
 		}
 		if tenantID == 0 {
-			c.JSON(http.StatusForbidden, gin.H{
-				"code":    100,
-				"message": "未关联租户",
-				"data":    nil,
-			})
+			response.AuthError(c, "未关联租户")
 			c.Abort()
 			return
 		}
@@ -37,11 +32,7 @@ func TenantRBACMiddleware(tenantSvc *tenantModule.TenantService) gin.HandlerFunc
 			}
 		}
 		if userID == 0 {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    100,
-				"message": "未认证",
-				"data":    nil,
-			})
+			response.AuthError(c, "未认证")
 			c.Abort()
 			return
 		}
@@ -50,11 +41,7 @@ func TenantRBACMiddleware(tenantSvc *tenantModule.TenantService) gin.HandlerFunc
 		resource := c.Request.URL.Path
 		action := c.Request.Method
 		if !tenantSvc.CheckAdminPermission(c.Request.Context(), tenantID, userID, resource, action) {
-			c.JSON(http.StatusForbidden, gin.H{
-				"code":    100,
-				"message": "权限不足",
-				"data":    nil,
-			})
+			response.AuthError(c, "权限不足")
 			c.Abort()
 			return
 		}

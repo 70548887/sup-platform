@@ -17,7 +17,7 @@ type Card struct {
 	TenantID uint   `gorm:"not null;default:1;index"`
 	BatchID   uint   `gorm:"not null;index"`
 	GoodsID   uint   `gorm:"not null;index:idx_goods_status"`
-	Content   string `gorm:"type:text;not null"` // 卡密内容（TODO: AES-GCM加密）
+	Content   string `gorm:"type:text;not null"` // 卡密内容（AES-GCM加密存储）
 	Password  string `gorm:"size:128"`           // 可选密码
 	Status    int8   `gorm:"not null;default:1;index:idx_goods_status"` // 1可用 2锁定 3已用
 	OrderID   *uint  `gorm:"index"`  // 关联订单

@@ -89,6 +89,20 @@ func (s *DockingService) SubmitOrder(ctx context.Context, orderID uint, supplier
 	return nil
 }
 
+// ExecuteTask 公开方法：根据taskID查找任务并执行提交（供Worker调用）
+func (s *DockingService) ExecuteTask(ctx context.Context, taskID uint) error {
+	task, err := s.repo.GetByID(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("docking: get task %d failed: %w", taskID, err)
+	}
+	var params adapter.SubmitParams
+	if err := json.Unmarshal([]byte(task.RequestPayload), &params); err != nil {
+		return fmt.Errorf("docking: unmarshal task %d payload failed: %w", taskID, err)
+	}
+	s.executeSubmit(taskID, params.CustomerOrderID)
+	return nil
+}
+
 // executeSubmit 执行单次提交逻辑
 func (s *DockingService) executeSubmit(taskID uint, orderSN string) {
 	ctx := context.Background()

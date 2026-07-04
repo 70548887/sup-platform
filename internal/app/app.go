@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -79,7 +80,22 @@ func New() (*App, error) {
 	// 4. 初始化各Service
 	ledgerSvc := ledger.NewLedgerService(db)
 	goodsSvc := goods.NewGoodsService(db)
-	cardSvc := card.NewCardService(db)
+
+	// 解析卡密加密密钥
+	var cardEncryptKey []byte
+	if cfg.Security.CardEncryptKey != "" {
+		key, err := hex.DecodeString(cfg.Security.CardEncryptKey)
+		if err != nil {
+			log.Printf("[WARN] CARD_ENCRYPT_KEY hex decode failed: %v, card encryption disabled", err)
+		} else if len(key) != 32 {
+			log.Printf("[WARN] CARD_ENCRYPT_KEY must be 32 bytes (got %d), card encryption disabled", len(key))
+		} else {
+			cardEncryptKey = key
+			log.Printf("[INFO] Card content encryption enabled (AES-256-GCM)")
+		}
+	}
+
+	cardSvc := card.NewCardService(db, cardEncryptKey)
 	orderSvc := order.NewOrderService(db, ledgerSvc)
 
 	// 4.1 初始化通知服务并注入OrderService
@@ -226,6 +242,7 @@ func loadConfig() *config.Config {
 		Security: config.SecurityConfig{
 			AllowedOrigins: strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"), ","),
 			TLSEnabled:     getEnv("TLS_ENABLED", "false") == "true",
+			CardEncryptKey: getEnv("CARD_ENCRYPT_KEY", ""),
 		},
 	}
 	return cfg

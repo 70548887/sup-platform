@@ -45,8 +45,8 @@ func QuotaCheckMiddleware(billingService *billing.BillingService, enabled bool) 
 		c.Header("X-Quota-Remaining", strconv.Itoa(remaining))
 
 		if !allowed {
-			c.JSON(http.StatusTooManyRequests, response.Response{
-				Code:    http.StatusTooManyRequests,
+			c.JSON(http.StatusOK, response.Response{
+				Code:    429,
 				Message: "API配额已用尽，请升级套餐",
 				Data:    nil,
 			})

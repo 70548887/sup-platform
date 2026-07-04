@@ -87,7 +87,9 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Legacy OpenAPI路由组（应用签名认证中间件）
-	legacyAuth := middleware.LegacyAuth(deps.DB, nil)
+	legacyAuth := middleware.LegacyAuth(deps.DB, &middleware.LegacyAuthConfig{
+		RedisClient: deps.RedisClient,
+	})
 
 	// 客户端API
 	customerGroup := r.Group("/openapi/customer")
@@ -248,8 +250,8 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	// 租户管理后台（仅多租户模式启用）
 	if deps.MultiTenantEnabled {
 		tenantAdminGroup := r.Group("/tenant-admin")
-		tenantAdminGroup.Use(middleware.TenantContextMiddleware(deps.Config))
 		tenantAdminGroup.Use(middleware.JWTAuth(deps.AuthSvc))
+		tenantAdminGroup.Use(middleware.TenantContextMiddleware(deps.Config))
 		tenantAdminGroup.Use(middleware.TenantRBACMiddleware(deps.TenantSvc))
 		{
 			tenantHandler := &tenanthttp.Handler{

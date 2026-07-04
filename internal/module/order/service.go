@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -186,7 +187,7 @@ func (s *OrderService) TransitionStatus(ctx context.Context, orderID uint, newSt
 	}
 	if err := s.repo.CreateStatusChange(ctx, change); err != nil {
 		// 审计记录写入失败不回滚状态变更，仅记录错误
-		return fmt.Errorf("order: save status change audit failed: %w", err)
+		log.Printf("[WARN] order: save status change audit failed: order_id=%d from=%d to=%d err=%v", orderID, order.Status, newStatus, err)
 	}
 
 	// 如果是退款终态，触发退款流程

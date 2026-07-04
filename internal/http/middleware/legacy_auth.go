@@ -1,12 +1,16 @@
 package middleware
 
 import (
+	"context"
+	"fmt"
+	"log"
 	"math"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/70548887/sup-platform/internal/http/response"
@@ -27,6 +31,7 @@ const (
 // LegacyAuthConfig Legacy认证中间件配置
 type LegacyAuthConfig struct {
 	TimestampWindow time.Duration // 时间戳有效窗口
+	RedisClient     *redis.Client // Redis客户端（用于nonce防重放，可为nil表示降级）
 }
 
 // LegacyAuth Legacy签名认证中间件
@@ -69,6 +74,12 @@ func LegacyAuth(db *gorm.DB, cfg *LegacyAuthConfig) gin.HandlerFunc {
 		appToken := c.GetHeader("AppToken")
 		if appToken == "" {
 			appToken = c.GetHeader("Apptoken")
+		}
+
+		// 读取可选的 AppNonce Header
+		appNonce := c.GetHeader("AppNonce")
+		if appNonce == "" {
+			appNonce = c.GetHeader("Appnonce")
 		}
 
 		// 2. 检查必填Header
@@ -119,13 +130,36 @@ func LegacyAuth(db *gorm.DB, cfg *LegacyAuthConfig) gin.HandlerFunc {
 			}
 		}
 
-		// 7. 计算签名并对比（使用ConstantTimeCompare防时序攻击）
+		// 7. 计算签名并对比
 		requestURI := c.Request.URL.Path
-		// 统一token为小写进行对比
-		if !signature.VerifyLegacy(appId, appInfo.AppSecret, requestURI, appTimestamp, strings.ToLower(appToken)) {
-			response.AuthError(c, "签名验证失败")
-			c.Abort()
-			return
+
+		if appNonce != "" {
+			// 带 nonce 的签名验证
+			if !signature.VerifyLegacyWithNonce(appId, appInfo.AppSecret, requestURI, appTimestamp, appNonce, strings.ToLower(appToken)) {
+				response.AuthError(c, "签名验证失败")
+				c.Abort()
+				return
+			}
+			// 防重放检查
+			if cfg.RedisClient != nil {
+				nonceKey := fmt.Sprintf("legacy_nonce:%s:%s", appId, appNonce)
+				ok, redisErr := cfg.RedisClient.SetNX(context.Background(), nonceKey, "1", 5*time.Minute).Result()
+				if redisErr != nil {
+					// Redis故障时降级：仅记录日志，不阻断请求
+					log.Printf("[WARN] nonce check redis error: %v", redisErr)
+				} else if !ok {
+					response.AuthError(c, "请求重复(nonce已使用)")
+					c.Abort()
+					return
+				}
+			}
+		} else {
+			// 旧客户端不带 nonce，使用原有验证逻辑
+			if !signature.VerifyLegacy(appId, appInfo.AppSecret, requestURI, appTimestamp, strings.ToLower(appToken)) {
+				response.AuthError(c, "签名验证失败")
+				c.Abort()
+				return
+			}
 		}
 
 		// 8. 认证成功，注入UserID和AppID到Context

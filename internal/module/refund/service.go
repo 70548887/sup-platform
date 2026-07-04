@@ -100,12 +100,11 @@ func (s *RefundService) Apply(ctx context.Context, customerID uint, orderSN stri
 
 // Approve 批准退款
 // 1. 验证状态=RefundPending
-// 2. 更新为RefundApproved
-// 3. 在事务中执行退款:
-//    a. ledgerSvc.Credit(退款金额到客户钱包)
-//    b. 更新订单RefundAmount累加
-//    c. 订单状态 StatusRefunding -> StatusReturned -> StatusRefunded
-//    d. 更新退款单status=RefundCompleted, RefundedAt=now
+// 2. 在事务中执行退款:
+//    a. CAS更新退款单状态 RefundPending -> RefundCompleted (含审批信息)
+//    b. ledgerSvc.Credit(退款金额到客户钱包)
+//    c. 更新订单RefundAmount累加（带金额上限约束）
+//    d. 订单状态 StatusRefunding -> StatusReturned -> StatusRefunded
 func (s *RefundService) Approve(ctx context.Context, refundID uint, reviewerID uint, note string) error {
 	// 1. 获取退款单
 	refund, err := s.repo.GetByID(ctx, refundID)
@@ -118,32 +117,44 @@ func (s *RefundService) Approve(ctx context.Context, refundID uint, reviewerID u
 		return fmt.Errorf("%w: expected %d, got %d", ErrInvalidRefundStatus, RefundPending, refund.Status)
 	}
 
-	// 3. 更新为RefundApproved
-	now := time.Now().Unix()
-	if err := s.repo.UpdateStatus(ctx, refundID, RefundApproved, map[string]interface{}{
-		"reviewer_id": reviewerID,
-		"review_note": note,
-		"reviewed_at": now,
-	}); err != nil {
-		return fmt.Errorf("refund: update to approved failed: %w", err)
-	}
-
-	// 4. 执行退款（在事务中）
+	// 3. 在事务中执行退款（退款单状态变更+钱包入账+订单更新原子完成）
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 4a. Credit退款金额到客户钱包
+		// 3a. CAS更新退款单: RefundPending -> RefundCompleted，同时写入审批信息
+		now := time.Now().Unix()
+		resultRefund := tx.WithContext(ctx).Model(&RefundOrder{}).
+			Where("id = ? AND status = ?", refundID, RefundPending).
+			Updates(map[string]interface{}{
+				"status":      RefundCompleted,
+				"reviewer_id": reviewerID,
+				"review_note": note,
+				"reviewed_at": now,
+				"refunded_at": now,
+			})
+		if resultRefund.Error != nil {
+			return fmt.Errorf("refund: update refund order status failed: %w", resultRefund.Error)
+		}
+		if resultRefund.RowsAffected == 0 {
+			return fmt.Errorf("%w: CAS update refund status", ErrCASConflict)
+		}
+
+		// 3b. Credit退款金额到客户钱包
 		creditNote := fmt.Sprintf("退款入账: %s", refund.RefundSN)
 		if err := s.ledgerSvc.Credit(ctx, tx, refund.CustomerID, refund.Amount, "refund", refund.ID, creditNote); err != nil {
 			return fmt.Errorf("refund: credit wallet failed: %w", err)
 		}
 
-		// 4b. 更新订单RefundAmount累加
-		if err := tx.WithContext(ctx).Model(&order.Order{}).
-			Where("id = ?", refund.OrderID).
-			UpdateColumn("refund_amount", gorm.Expr("refund_amount + ?", refund.Amount)).Error; err != nil {
-			return fmt.Errorf("refund: update order refund_amount failed: %w", err)
+		// 3c. 更新订单RefundAmount累加（带金额上限约束，防止并发超额退款）
+		result := tx.WithContext(ctx).Model(&order.Order{}).
+			Where("id = ? AND refund_amount + ? <= amount", refund.OrderID, refund.Amount).
+			UpdateColumn("refund_amount", gorm.Expr("refund_amount + ?", refund.Amount))
+		if result.Error != nil {
+			return fmt.Errorf("refund: update order refund_amount failed: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("%w: refund amount exceeds order amount", ErrRefundAmountExceeded)
 		}
 
-		// 4c. 订单状态转移: StatusRefunding -> StatusReturned -> StatusRefunded
+		// 3d. 订单状态转移: StatusRefunding -> StatusReturned -> StatusRefunded
 		// 注意: 不使用TransitionStatus，因为它不支持事务参数，
 		// 且转入StatusRefunded会触发processRefund造成重复入账。
 		// 在事务内直接执行CAS状态转移 + 写入审计记录。
@@ -185,7 +196,7 @@ func (s *RefundService) Approve(ctx context.Context, refundID uint, reviewerID u
 		}
 
 		// StatusReturned -> StatusRefunded
-		result := tx.WithContext(ctx).Model(&order.Order{}).
+		result = tx.WithContext(ctx).Model(&order.Order{}).
 			Where("id = ? AND status = ? AND version = ?", ord.ID, order.StatusReturned, ord.Version).
 			Updates(map[string]interface{}{
 				"status":  order.StatusRefunded,
@@ -210,25 +221,15 @@ func (s *RefundService) Approve(ctx context.Context, refundID uint, reviewerID u
 			return fmt.Errorf("refund: create audit record (refunded) failed: %w", err)
 		}
 
-		// 4d. 更新退款单status=RefundCompleted, RefundedAt=now
-		refundedAt := time.Now().Unix()
-		if err := tx.WithContext(ctx).Model(&RefundOrder{}).
-			Where("id = ?", refundID).
-			Updates(map[string]interface{}{
-				"status":      RefundCompleted,
-				"refunded_at": refundedAt,
-			}).Error; err != nil {
-			return fmt.Errorf("refund: update refund order to completed failed: %w", err)
-		}
-
 		return nil
 	})
 }
 
 // Reject 拒绝退款
 // 1. 验证状态=RefundPending
-// 2. 更新为RefundRejected
-// 3. 订单状态回退: StatusRefunding -> StatusProcessing
+// 2. 在事务中执行:
+//    a. CAS更新退款单状态 RefundPending -> RefundRejected
+//    b. 订单状态回退: StatusRefunding -> StatusProcessing
 func (s *RefundService) Reject(ctx context.Context, refundID uint, reviewerID uint, note string) error {
 	// 1. 获取退款单
 	refund, err := s.repo.GetByID(ctx, refundID)
@@ -241,20 +242,26 @@ func (s *RefundService) Reject(ctx context.Context, refundID uint, reviewerID ui
 		return fmt.Errorf("%w: expected %d, got %d", ErrInvalidRefundStatus, RefundPending, refund.Status)
 	}
 
-	// 3. 更新为RefundRejected
-	now := time.Now().Unix()
-	if err := s.repo.UpdateStatus(ctx, refundID, RefundRejected, map[string]interface{}{
-		"reviewer_id": reviewerID,
-		"review_note": note,
-		"reviewed_at": now,
-	}); err != nil {
-		return fmt.Errorf("refund: update to rejected failed: %w", err)
-	}
-
-	// 4. 订单状态回退: StatusRefunding -> StatusProcessing
-	// 注意: ValidTransitions不支持StatusRefunding -> StatusProcessing的回退，
-	// 因此在事务内直接执行CAS状态回退 + 写入审计记录。
+	// 3. 在事务中执行退款拒绝（退款单状态变更+订单状态回退原子完成）
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 3a. CAS更新退款单: RefundPending -> RefundRejected，同时写入审批信息
+		now := time.Now().Unix()
+		resultRefund := tx.WithContext(ctx).Model(&RefundOrder{}).
+			Where("id = ? AND status = ?", refundID, RefundPending).
+			Updates(map[string]interface{}{
+				"status":      RefundRejected,
+				"reviewer_id": reviewerID,
+				"review_note": note,
+				"reviewed_at": now,
+			})
+		if resultRefund.Error != nil {
+			return fmt.Errorf("refund: update refund order to rejected failed: %w", resultRefund.Error)
+		}
+		if resultRefund.RowsAffected == 0 {
+			return fmt.Errorf("%w: CAS update refund status to rejected", ErrCASConflict)
+		}
+
+		// 3b. 订单状态回退: StatusRefunding -> StatusProcessing
 		var ord order.Order
 		if err := tx.WithContext(ctx).Where("id = ?", refund.OrderID).First(&ord).Error; err != nil {
 			return fmt.Errorf("refund: reload order failed: %w", err)

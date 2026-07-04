@@ -57,8 +57,8 @@ func RateLimitMiddleware(limiter *ratelimit.RateLimiter, db *gorm.DB) gin.Handle
 		}
 
 		if !allowed {
-			c.JSON(http.StatusTooManyRequests, response.Response{
-				Code:    http.StatusTooManyRequests,
+			c.JSON(http.StatusOK, response.Response{
+				Code:    429,
 				Message: "rate limit exceeded",
 				Data:    nil,
 			})
