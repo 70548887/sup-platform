@@ -10,14 +10,19 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/70548887/sup-platform/internal/adapter"
+	"github.com/70548887/sup-platform/internal/adapter/yile"
 	"github.com/70548887/sup-platform/internal/config"
 	apphttp "github.com/70548887/sup-platform/internal/http"
 	"github.com/70548887/sup-platform/internal/module/audit"
+	"github.com/70548887/sup-platform/internal/module/auth"
 	"github.com/70548887/sup-platform/internal/module/card"
+	"github.com/70548887/sup-platform/internal/module/docking"
 	"github.com/70548887/sup-platform/internal/module/goods"
 	"github.com/70548887/sup-platform/internal/module/ledger"
 	"github.com/70548887/sup-platform/internal/module/notify"
 	"github.com/70548887/sup-platform/internal/module/order"
+	"github.com/70548887/sup-platform/internal/module/recharge"
 	"github.com/70548887/sup-platform/internal/module/refund"
 	"github.com/70548887/sup-platform/migrations"
 )
@@ -62,8 +67,35 @@ func New() (*App, error) {
 	// 4.3 初始化退款服务
 	refundSvc := refund.NewRefundService(db, orderSvc, ledgerSvc)
 
+	// 4.4 初始化认证服务
+	authSvc := auth.NewAuthService(db, cfg.JWT.Secret, cfg.JWT.Expire)
+
+	// 4.5 Phase 3 服务初始化
+	rechargeSvc := recharge.NewRechargeService(db, ledgerSvc)
+	adapterFactory := adapter.NewFactory()
+	// 注册亿乐适配器（如果配置了YILE_APP_ID）
+	yileCfg := yile.LoadFromEnv()
+	if yileCfg.AppId != "" {
+		yileAdapter := yile.NewYileAdapter(yileCfg)
+		// 供货商ID=1暂时硬编码，后续从数据库读取
+		adapterFactory.Register(1, yileAdapter)
+	}
+	dockingSvc := docking.NewDockingService(db, adapterFactory)
+
 	// 5. 设置路由
-	router := apphttp.SetupRouter(db, goodsSvc, orderSvc, cardSvc, ledgerSvc, auditSvc, cfg)
+	router := apphttp.SetupRouter(apphttp.RouterDeps{
+		DB:          db,
+		Config:      cfg,
+		GoodsSvc:    goodsSvc,
+		OrderSvc:    orderSvc,
+		CardSvc:     cardSvc,
+		LedgerSvc:   ledgerSvc,
+		AuditSvc:    auditSvc,
+		RechargeSvc: rechargeSvc,
+		DockingSvc:  dockingSvc,
+		RefundSvc:   refundSvc,
+		AuthSvc:     authSvc,
+	})
 
 	return &App{
 		DB:        db,
