@@ -1,10 +1,13 @@
 package customer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -461,6 +464,140 @@ func (h *Handler) OrderStatusHandle(c *gin.Context) {
 	response.Success(c, gin.H{
 		"order_sn": req.OrderSN,
 		"status":   req.Status,
+	})
+}
+
+// OrderInShow POST /openapi/customer/Order/InShow — 批量订单查询
+func (h *Handler) OrderInShow(c *gin.Context) {
+	var req struct {
+		OrderSNs []string `json:"order_sns"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ParamError(c, "order_sns", "请求参数格式错误")
+		return
+	}
+
+	if len(req.OrderSNs) == 0 {
+		response.ParamError(c, "order_sns", "订单号列表不能为空")
+		return
+	}
+	if len(req.OrderSNs) > 50 {
+		response.ParamError(c, "order_sns", "最多支持50个订单号")
+		return
+	}
+
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		response.AuthError(c, "无法获取用户信息")
+		return
+	}
+
+	ctx := context.Background()
+	orders, err := h.OrderSvc.BatchGetOrders(ctx, req.OrderSNs)
+	if err != nil {
+		response.Error(c, "查询订单失败")
+		return
+	}
+
+	type orderItem struct {
+		OrderSN   string   `json:"order_sn"`
+		Status    int8     `json:"status"`
+		Amount    string   `json:"amount"`
+		BuyNumber int      `json:"buy_number"`
+		CardCodes []string `json:"card_codes"`
+		CreatedAt int64    `json:"created_at"`
+	}
+
+	items := make([]orderItem, 0, len(orders))
+	for _, ord := range orders {
+		// 只返回属于当前用户的订单
+		if ord.CustomerID != userID {
+			continue
+		}
+
+		// 获取卡密内容
+		var cardContents []string
+		cards, err := h.CardSvc.GetOrderCards(ctx, ord.ID)
+		if err == nil && len(cards) > 0 {
+			for _, cd := range cards {
+				cardContents = append(cardContents, cd.Content)
+			}
+		}
+		if cardContents == nil {
+			cardContents = []string{}
+		}
+
+		items = append(items, orderItem{
+			OrderSN:   ord.OrderSN,
+			Status:    ord.Status,
+			Amount:    ord.Amount.StringFixed(2),
+			BuyNumber: ord.BuyNumber,
+			CardCodes: cardContents,
+			CreatedAt: ord.CreatedAt,
+		})
+	}
+
+	response.Success(c, gin.H{
+		"orders": items,
+	})
+}
+
+// CallbackTest POST /openapi/customer/Callback/Test — 测试回调URL连通性
+func (h *Handler) CallbackTest(c *gin.Context) {
+	var req struct {
+		NotifyURL string `json:"notify_url"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.NotifyURL == "" {
+		response.ParamError(c, "notify_url", "回调地址不能为空")
+		return
+	}
+
+	// 验证URL格式基本合法
+	if len(req.NotifyURL) > 500 {
+		response.ParamError(c, "notify_url", "回调地址过长")
+		return
+	}
+
+	// 构造测试payload
+	testPayload := map[string]interface{}{
+		"event":     "callback.test",
+		"timestamp": time.Now().Unix(),
+	}
+	payloadBytes, _ := json.Marshal(testPayload)
+
+	// 发起HTTP POST请求测试连通性
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	start := time.Now()
+
+	httpReq, err := http.NewRequest(http.MethodPost, req.NotifyURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		response.Success(c, gin.H{
+			"reachable":        false,
+			"response_time_ms": 0,
+			"error":            "无效的URL地址",
+		})
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(httpReq)
+	elapsed := time.Since(start).Milliseconds()
+
+	if err != nil {
+		response.Success(c, gin.H{
+			"reachable":        false,
+			"response_time_ms": elapsed,
+			"error":            err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	reachable := resp.StatusCode >= 200 && resp.StatusCode < 300
+	response.Success(c, gin.H{
+		"reachable":        reachable,
+		"response_time_ms": elapsed,
+		"status_code":      resp.StatusCode,
 	})
 }
 

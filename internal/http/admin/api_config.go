@@ -10,6 +10,7 @@ import (
 
 	"github.com/70548887/sup-platform/internal/http/response"
 	"github.com/70548887/sup-platform/internal/module/audit"
+	pkgcrypto "github.com/70548887/sup-platform/internal/pkg/crypto"
 )
 
 // apiAppListItem API应用列表返回项
@@ -164,5 +165,207 @@ func (h *Handler) GetAppUsage(c *gin.Context) {
 		"rate_limit":    app.RateLimit,
 		"current_usage": -1,
 		"remaining":     -1,
+	})
+}
+
+// CreateApiApp POST /admin/api-apps — 为指定用户创建应用
+func (h *Handler) CreateApiApp(c *gin.Context) {
+	var req struct {
+		UserID      uint   `json:"user_id" binding:"required"`
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
+		Environment string `json:"environment"`
+		RateLimit   int    `json:"rate_limit"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ParamError(c, "", "user_id和name不能为空")
+		return
+	}
+
+	if req.Environment == "" {
+		req.Environment = "production"
+	}
+	if req.RateLimit <= 0 {
+		req.RateLimit = 60
+	}
+
+	// 生成AppId + AppSecret
+	appId, err := pkgcrypto.GenerateAppId()
+	if err != nil {
+		response.Error(c, "生成应用ID失败")
+		return
+	}
+	appSecret, err := pkgcrypto.GenerateAppSecret()
+	if err != nil {
+		response.Error(c, "生成应用密钥失败")
+		return
+	}
+
+	now := time.Now()
+	result := h.DB.Table("api_apps").Create(map[string]interface{}{
+		"user_id":     req.UserID,
+		"app_name":    req.Name,
+		"app_id":      appId,
+		"app_secret":  appSecret,
+		"environment": req.Environment,
+		"description": req.Description,
+		"rate_limit":  req.RateLimit,
+		"status":      1,
+		"created_at":  now,
+		"updated_at":  now,
+	})
+	if result.Error != nil {
+		response.Error(c, "创建应用失败")
+		return
+	}
+
+	// 审计日志
+	adminID := getAdminUserID(c)
+	adminName := getAdminUsername(c)
+	h.AuditSvc.Log(context.Background(), audit.NewEntry(
+		adminID, adminName, "api_app.create", "api_app", 0,
+		fmt.Sprintf("为用户%d创建应用%s", req.UserID, req.Name),
+	))
+
+	response.Success(c, gin.H{
+		"app_id":      appId,
+		"app_secret":  appSecret,
+		"name":        req.Name,
+		"environment": req.Environment,
+		"rate_limit":  req.RateLimit,
+	})
+}
+
+// UpdateApiAppStatus PATCH /admin/api-apps/:id/status — 更新应用状态
+func (h *Handler) UpdateApiAppStatus(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Status int `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ParamError(c, "status", "请求参数格式错误")
+		return
+	}
+	if req.Status != 0 && req.Status != 1 {
+		response.ParamError(c, "status", "status仅支持0(禁用)或1(启用)")
+		return
+	}
+
+	// 检查应用是否存在
+	var app apiAppDBItem
+	if err := h.DB.Table("api_apps").Where("id = ?", id).First(&app).Error; err != nil {
+		response.Error(c, "应用不存在")
+		return
+	}
+
+	if err := h.DB.Table("api_apps").Where("id = ?", id).Updates(map[string]interface{}{
+		"status":     req.Status,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		response.Error(c, "更新状态失败")
+		return
+	}
+
+	// 审计日志
+	adminID := getAdminUserID(c)
+	adminName := getAdminUsername(c)
+	statusDesc := "禁用"
+	if req.Status == 1 {
+		statusDesc = "启用"
+	}
+	h.AuditSvc.Log(context.Background(), audit.NewEntry(
+		adminID, adminName, "api_app.status_update", "api_app", id,
+		fmt.Sprintf("%s应用%s", statusDesc, app.AppID),
+	))
+
+	response.Success(c, gin.H{
+		"id":     id,
+		"app_id": app.AppID,
+		"status": req.Status,
+	})
+}
+
+// DeleteApiApp DELETE /admin/api-apps/:id — 删除应用
+func (h *Handler) DeleteApiApp(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	// 检查应用是否存在
+	var app apiAppDBItem
+	if err := h.DB.Table("api_apps").Where("id = ?", id).First(&app).Error; err != nil {
+		response.Error(c, "应用不存在")
+		return
+	}
+
+	if err := h.DB.Table("api_apps").Where("id = ?", id).Delete(nil).Error; err != nil {
+		response.Error(c, "删除应用失败")
+		return
+	}
+
+	// 审计日志
+	adminID := getAdminUserID(c)
+	adminName := getAdminUsername(c)
+	h.AuditSvc.Log(context.Background(), audit.NewEntry(
+		adminID, adminName, "api_app.delete", "api_app", id,
+		fmt.Sprintf("删除应用%s", app.AppID),
+	))
+
+	response.Success(c, gin.H{
+		"id":      id,
+		"app_id":  app.AppID,
+		"deleted": true,
+	})
+}
+
+// ResetApiAppSecret POST /admin/api-apps/:id/reset — 重新生成Secret
+func (h *Handler) ResetApiAppSecret(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	// 检查应用是否存在
+	var app apiAppDBItem
+	if err := h.DB.Table("api_apps").Where("id = ?", id).First(&app).Error; err != nil {
+		response.Error(c, "应用不存在")
+		return
+	}
+
+	// 生成新Secret
+	newSecret, err := pkgcrypto.GenerateAppSecret()
+	if err != nil {
+		response.Error(c, "生成新密钥失败")
+		return
+	}
+
+	now := time.Now()
+	if err := h.DB.Table("api_apps").Where("id = ?", id).Updates(map[string]interface{}{
+		"app_secret":    newSecret,
+		"key_rotated_at": now.Unix(),
+		"updated_at":    now,
+	}).Error; err != nil {
+		response.Error(c, "重置密钥失败")
+		return
+	}
+
+	// 审计日志
+	adminID := getAdminUserID(c)
+	adminName := getAdminUsername(c)
+	h.AuditSvc.Log(context.Background(), audit.NewEntry(
+		adminID, adminName, "api_app.secret_reset", "api_app", id,
+		fmt.Sprintf("重置应用%s的密钥", app.AppID),
+	))
+
+	response.Success(c, gin.H{
+		"id":             id,
+		"app_id":         app.AppID,
+		"app_secret":     newSecret,
+		"key_rotated_at": now.Unix(),
 	})
 }

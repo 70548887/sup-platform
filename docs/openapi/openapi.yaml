@@ -1,0 +1,1614 @@
+openapi: "3.0.3"
+info:
+  title: SUP聚合供货平台 API
+  version: "1.0.0"
+  description: |
+    SUP平台RESTful API规范，兼容亿乐SUP协议。
+    ## 认证方式
+    - **JWT Bearer**：管理后台（/admin、/tenant-admin）
+    - **Legacy签名**：客户端/供货商API（/openapi/*）
+    ## 响应格式
+    统一返回 `{code, message, data}`，HTTP状态码200。
+    code: 0=成功, 1=业务错误, 2=参数错误, 100=认证错误, 429=限流
+servers:
+  - url: http://localhost:8080
+    description: 本地开发
+  - url: https://api.example.com
+    description: 生产环境
+tags:
+  - name: Health
+  - name: Auth
+  - name: Admin-Users
+  - name: Admin-Goods
+  - name: Admin-Orders
+  - name: Admin-Refunds
+  - name: Admin-Recharges
+  - name: Admin-Docking
+  - name: Admin-Audit
+  - name: Admin-Pricing
+  - name: Admin-CustomerGroups
+  - name: Admin-ApiApps
+  - name: Admin-Reconciliation
+  - name: Admin-Analytics
+  - name: Admin-Billing
+  - name: Admin-Settlement
+  - name: OpenAPI-Customer
+  - name: OpenAPI-Supplier
+  - name: TenantAdmin
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: 存活检查（Liveness）
+      security: []
+      responses:
+        "200":
+          description: 服务存活
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "ok" }
+                  time: { type: integer }
+  /readiness:
+    get:
+      tags: [Health]
+      summary: 就绪检查（Readiness）
+      description: 检测DB和Redis依赖
+      security: []
+      responses:
+        "200":
+          description: 依赖正常
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "ready" }
+                  db: { type: string, enum: [up, down] }
+                  redis: { type: string, enum: [up, down] }
+                  time: { type: integer }
+        "503":
+          description: 数据库不可用
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: 用户登录
+      description: 验证凭据，返回JWT Token并设置HttpOnly Cookie
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string }
+                password: { type: string }
+                role: { type: string, enum: [admin, supplier, customer] }
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              example: { code: 0, message: "success", data: { token: "eyJ..." } }
+
+  # ══════════ Admin - Users ══════════
+  /admin/users:
+    get:
+      tags: [Admin-Users]
+      summary: 用户分页列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+        - { name: role, in: query, schema: { type: string, enum: [admin, supplier, customer] } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          list: { type: array, items: { $ref: "#/components/schemas/UserItem" } }
+                          total: { type: integer }
+                          page: { type: integer }
+                          size: { type: integer }
+    post:
+      tags: [Admin-Users]
+      summary: 创建新用户
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string, minLength: 3, maxLength: 64 }
+                password: { type: string, minLength: 6 }
+                nickname: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                role: { type: string, enum: [admin, supplier, customer] }
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/UserItem" }
+
+  /admin/users/{id}:
+    get:
+      tags: [Admin-Users]
+      summary: 获取用户详情
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/UserItem" }
+
+  /admin/users/{id}/status:
+    patch:
+      tags: [Admin-Users]
+      summary: 修改用户状态
+      description: "启用(1)或禁用(0)用户"
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: integer, enum: [0, 1] }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Response" }
+
+  # ══════════ Admin - Goods ══════════
+  /admin/goods:
+    get:
+      tags: [Admin-Goods]
+      summary: 商品分页列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+        - { name: status, in: query, schema: { type: integer }, description: "0=下架,1=上架" }
+        - { name: supplier_id, in: query, schema: { type: integer } }
+        - { name: keyword, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          list: { type: array, items: { $ref: "#/components/schemas/GoodsItem" } }
+                          total: { type: integer }
+                          page: { type: integer }
+                          size: { type: integer }
+
+  /admin/goods/{id}/status:
+    patch:
+      tags: [Admin-Goods]
+      summary: 商品上下架
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: integer, enum: [0, 1], description: "0=下架,1=上架" }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/goods/pending:
+    get:
+      tags: [Admin-Goods]
+      summary: 待审核商品列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/goods/{id}/approve:
+    post:
+      tags: [Admin-Goods]
+      summary: 审核通过商品
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/goods/{id}/reject:
+    post:
+      tags: [Admin-Goods]
+      summary: 拒绝商品
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - Orders ══════════
+  /admin/orders:
+    get:
+      tags: [Admin-Orders]
+      summary: 订单分页列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+        - { name: status, in: query, schema: { type: integer } }
+        - { name: customer_id, in: query, schema: { type: integer } }
+        - { name: supplier_id, in: query, schema: { type: integer } }
+        - { name: start_time, in: query, schema: { type: integer }, description: "Unix时间戳" }
+        - { name: end_time, in: query, schema: { type: integer }, description: "Unix时间戳" }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/orders/{id}:
+    get:
+      tags: [Admin-Orders]
+      summary: 获取订单详情
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/orders/{id}/status:
+    post:
+      tags: [Admin-Orders]
+      summary: 修改订单状态
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: integer }
+                remark: { type: string }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - Refunds ══════════
+  /admin/refunds:
+    get:
+      tags: [Admin-Refunds]
+      summary: 退款列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+        - { name: status, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          list: { type: array, items: { $ref: "#/components/schemas/RefundItem" } }
+                          total: { type: integer }
+                          page: { type: integer }
+                          size: { type: integer }
+
+  /admin/refunds/{id}/approve:
+    post:
+      tags: [Admin-Refunds]
+      summary: 批准退款
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, description: 审核备注 }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/refunds/{id}/reject:
+    post:
+      tags: [Admin-Refunds]
+      summary: 拒绝退款
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note: { type: string, description: 拒绝原因 }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - Recharges ══════════
+  /admin/recharges:
+    get:
+      tags: [Admin-Recharges]
+      summary: 充值列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+        - { name: user_id, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          list: { type: array, items: { $ref: "#/components/schemas/RechargeItem" } }
+                          total: { type: integer }
+                          page: { type: integer }
+                          size: { type: integer }
+
+  /admin/recharges/{id}/approve:
+    post:
+      tags: [Admin-Recharges]
+      summary: 批准充值
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/recharges/{id}/reject:
+    post:
+      tags: [Admin-Recharges]
+      summary: 拒绝充值
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note: { type: string }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - Docking ══════════
+  /admin/docking-tasks/failed:
+    get:
+      tags: [Admin-Docking]
+      summary: 失败对接任务列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          list: { type: array, items: { $ref: "#/components/schemas/DockingTaskItem" } }
+                          total: { type: integer }
+                          page: { type: integer }
+                          size: { type: integer }
+
+  /admin/docking-tasks/{id}/retry:
+    post:
+      tags: [Admin-Docking]
+      summary: 手动重试对接任务
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/docking-tasks/stats:
+    get:
+      tags: [Admin-Docking]
+      summary: 对接统计
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: supplier_id, in: query, schema: { type: integer } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - Audit ══════════
+  /admin/audit:
+    get:
+      tags: [Admin-Audit]
+      summary: 审计日志列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+        - { name: user_id, in: query, schema: { type: integer } }
+        - { name: action, in: query, schema: { type: string }, description: "操作类型如user.create" }
+        - { name: resource, in: query, schema: { type: string }, description: "资源类型如user/goods" }
+        - { name: start_time, in: query, schema: { type: integer } }
+        - { name: end_time, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          list: { type: array, items: { $ref: "#/components/schemas/AuditLogItem" } }
+                          total: { type: integer }
+                          page: { type: integer }
+                          size: { type: integer }
+
+  # ══════════ Admin - Pricing ══════════
+  /admin/pricing/rules:
+    post:
+      tags: [Admin-Pricing]
+      summary: 创建定价规则
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PricingRuleCreate" }
+      responses:
+        "201": { description: 创建成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+        "409": { description: 规则冲突, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+    get:
+      tags: [Admin-Pricing]
+      summary: 定价规则列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+        - { name: goods_id, in: query, schema: { type: integer } }
+        - { name: rule_type, in: query, schema: { type: string } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/pricing/rules/{id}:
+    put:
+      tags: [Admin-Pricing]
+      summary: 更新定价规则
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PricingRuleCreate" }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+    delete:
+      tags: [Admin-Pricing]
+      summary: 删除定价规则
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/pricing/calc-preview:
+    post:
+      tags: [Admin-Pricing]
+      summary: 定价计算预览
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [goods_id, quantity]
+              properties:
+                goods_id: { type: integer }
+                customer_id: { type: integer }
+                quantity: { type: integer }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - Customer Groups ══════════
+  /admin/customer-groups:
+    post:
+      tags: [Admin-CustomerGroups]
+      summary: 创建客户分组
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+    get:
+      tags: [Admin-CustomerGroups]
+      summary: 客户分组列表
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/customer-groups/{id}/members:
+    post:
+      tags: [Admin-CustomerGroups]
+      summary: 添加分组成员
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: { type: integer }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/customer-groups/{id}/members/{memberId}:
+    delete:
+      tags: [Admin-CustomerGroups]
+      summary: 移除分组成员
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+        - { name: memberId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - API Apps ══════════
+  /admin/api-apps:
+    get:
+      tags: [Admin-ApiApps]
+      summary: API应用列表
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/api-apps/{id}/rate-limit:
+    patch:
+      tags: [Admin-ApiApps]
+      summary: 更新限流配置
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rpm: { type: integer, description: 每分钟请求数 }
+                daily_limit: { type: integer, description: 每日请求数 }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/api-apps/{id}/usage:
+    get:
+      tags: [Admin-ApiApps]
+      summary: 应用用量统计
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - Reconciliation ══════════
+  /admin/reconciliation/run:
+    post:
+      tags: [Admin-Reconciliation]
+      summary: 执行对账
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                supplier_id: { type: integer }
+                date: { type: string, description: "YYYY-MM-DD" }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/reconciliation/tasks:
+    get:
+      tags: [Admin-Reconciliation]
+      summary: 对账任务列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/reconciliation/tasks/{id}:
+    get:
+      tags: [Admin-Reconciliation]
+      summary: 对账任务详情
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/reconciliation/errors/{id}:
+    patch:
+      tags: [Admin-Reconciliation]
+      summary: 解决对账差异
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resolution: { type: string }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - Analytics ══════════
+  /admin/analytics/dashboard:
+    get:
+      tags: [Admin-Analytics]
+      summary: 综合大盘数据
+      description: 获取今日/昨日/本周/本月统计
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          today: { $ref: "#/components/schemas/PeriodStats" }
+                          yesterday: { $ref: "#/components/schemas/PeriodStats" }
+                          week: { $ref: "#/components/schemas/PeriodStats" }
+                          month: { $ref: "#/components/schemas/PeriodStats" }
+
+  /admin/analytics/revenue-trend:
+    get:
+      tags: [Admin-Analytics]
+      summary: 收入趋势
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: start_date, in: query, required: true, schema: { type: string }, description: "YYYY-MM-DD" }
+        - { name: end_date, in: query, required: true, schema: { type: string }, description: "YYYY-MM-DD" }
+        - { name: granularity, in: query, schema: { type: string, enum: [day, week, month], default: day } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/analytics/hot-goods:
+    get:
+      tags: [Admin-Analytics]
+      summary: 热卖商品排行
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: top_n, in: query, schema: { type: integer, default: 10 } }
+        - { name: date, in: query, schema: { type: string } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/analytics/order-stats:
+    get:
+      tags: [Admin-Analytics]
+      summary: 订单统计（按状态分组）
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: start_date, in: query, required: true, schema: { type: string } }
+        - { name: end_date, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/analytics/customer-stats:
+    get:
+      tags: [Admin-Analytics]
+      summary: 客户统计
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: start_date, in: query, required: true, schema: { type: string } }
+        - { name: end_date, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/analytics/aggregate:
+    post:
+      tags: [Admin-Analytics]
+      summary: 手动触发数据聚合
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                date: { type: string, description: "YYYY-MM-DD，默认今天" }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - Billing ══════════
+  /admin/billing/plans:
+    get:
+      tags: [Admin-Billing]
+      summary: 计费套餐列表
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          list: { type: array, items: { $ref: "#/components/schemas/BillingPlanItem" } }
+    post:
+      tags: [Admin-Billing]
+      summary: 创建计费套餐
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, display_name, monthly_price, max_api_calls_per_month]
+              properties:
+                name: { type: string }
+                display_name: { type: string }
+                monthly_price: { type: string }
+                max_api_calls_per_month: { type: integer }
+                max_orders: { type: integer }
+                max_admins: { type: integer }
+                features: { type: string }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/billing/subscriptions:
+    get:
+      tags: [Admin-Billing]
+      summary: 订阅列表
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/billing/invoices:
+    get:
+      tags: [Admin-Billing]
+      summary: 账单列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/billing/invoices/generate:
+    post:
+      tags: [Admin-Billing]
+      summary: 生成账单
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tenant_id: { type: integer }
+                period: { type: string, description: "YYYY-MM" }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/billing/invoices/{id}/mark-paid:
+    post:
+      tags: [Admin-Billing]
+      summary: 标记账单已付款
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Admin - Settlement ══════════
+  /admin/settlements:
+    get:
+      tags: [Admin-Settlement]
+      summary: 结算单分页列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+        - { name: supplier_id, in: query, schema: { type: integer } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/settlements/{id}:
+    get:
+      tags: [Admin-Settlement]
+      summary: 结算单详情
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/settlements/generate:
+    post:
+      tags: [Admin-Settlement]
+      summary: 生成结算单
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [supplier_id, period]
+              properties:
+                supplier_id: { type: integer }
+                period: { type: string, description: "YYYY-MM" }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/settlements/{id}/confirm:
+    post:
+      tags: [Admin-Settlement]
+      summary: 确认结算单
+      description: pending → confirmed
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /admin/settlements/{id}/paid:
+    post:
+      tags: [Admin-Settlement]
+      summary: 标记结算已付款
+      description: confirmed → paid
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ OpenAPI - Customer ══════════
+  /openapi/customer/CustomerAccount/Show:
+    get:
+      tags: [OpenAPI-Customer]
+      summary: 账户信息
+      description: 获取当前客户的账户信息和余额
+      security: [{ LegacySignature: [] }]
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example: { code: 0, message: "success", data: { serial_number: "1001", name: "", balance: "1000.50" } }
+
+  /openapi/customer/Goods/CategoryList:
+    get:
+      tags: [OpenAPI-Customer]
+      summary: 商品分类列表
+      security: [{ LegacySignature: [] }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/customer/Goods/List:
+    post:
+      tags: [OpenAPI-Customer]
+      summary: 商品列表（分页）
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                page: { type: integer, default: 1 }
+                pageSize: { type: integer, default: 20 }
+                category_id: { type: integer }
+                name: { type: string }
+                serial_number: { type: string }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/customer/Goods/Show:
+    post:
+      tags: [OpenAPI-Customer]
+      summary: 商品详情
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [goods_id]
+              properties:
+                goods_id: { type: integer }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/customer/Goods/Buy:
+    post:
+      tags: [OpenAPI-Customer]
+      summary: 购买商品
+      description: 下单购买，支持幂等（external_order_id）
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [goods_id, quantity]
+              properties:
+                goods_id: { type: integer }
+                quantity: { type: integer, minimum: 1 }
+                buy_params: { type: object, description: 自定义购买参数 }
+                external_order_id: { type: string, description: 外部订单号（幂等） }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example: { code: 0, message: "success", data: { order_id: 123, order_sn: "ORD202401010001", status: 1 } }
+
+  /openapi/customer/Order/Show:
+    post:
+      tags: [OpenAPI-Customer]
+      summary: 查询订单（含卡密）
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                order_id: { type: integer }
+                order_sn: { type: string, description: 与order_id二选一 }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/customer/Order/StatusHandle:
+    post:
+      tags: [OpenAPI-Customer]
+      summary: 订单状态操作
+      description: 确认收货、申请退款等
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, action]
+              properties:
+                order_id: { type: integer }
+                action: { type: string }
+                reason: { type: string, description: 退款时必填 }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/customer/Order/InShow:
+    post:
+      tags: [OpenAPI-Customer]
+      summary: 批量订单查询
+      description: 根据多个订单号批量查询订单状态和详情，最多50个
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_sns]
+              properties:
+                order_sns:
+                  type: array
+                  items: { type: string }
+                  description: 订单号列表，最多50个
+                  example: ["ORD001", "ORD002", "ORD003"]
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  message: { type: string, example: "success" }
+                  data:
+                    type: object
+                    properties:
+                      orders:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            order_sn: { type: string }
+                            status: { type: integer }
+                            amount: { type: string }
+                            buy_number: { type: integer }
+                            card_codes:
+                              type: array
+                              items: { type: string }
+                            created_at: { type: integer }
+
+  /openapi/customer/Callback/Test:
+    post:
+      tags: [OpenAPI-Customer]
+      summary: 测试回调URL连通性
+      description: 客户端测试回调URL是否可达
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [notify_url]
+              properties:
+                notify_url: { type: string, description: 回调地址, example: "https://client.example.com/callback" }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  message: { type: string, example: "success" }
+                  data:
+                    type: object
+                    properties:
+                      reachable: { type: boolean }
+                      response_time_ms: { type: integer }
+                      status_code: { type: integer }
+
+  # ══════════ OpenAPI - Supplier ══════════
+  /openapi/supplier/Goods/Paging:
+    post:
+      tags: [OpenAPI-Supplier]
+      summary: 供货商商品列表
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                page: { type: integer, default: 1 }
+                pageSize: { type: integer, default: 20 }
+                status: { type: integer }
+                name: { type: string }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/supplier/Goods/Show:
+    post:
+      tags: [OpenAPI-Supplier]
+      summary: 商品详情
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [goods_id]
+              properties:
+                goods_id: { type: integer }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/supplier/Goods/Edit:
+    post:
+      tags: [OpenAPI-Supplier]
+      summary: 编辑商品
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [goods_id]
+              properties:
+                goods_id: { type: integer }
+                name: { type: string }
+                description: { type: string }
+                stock: { type: integer }
+                status: { type: integer }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/supplier/Goods/EditPrice:
+    post:
+      tags: [OpenAPI-Supplier]
+      summary: 修改商品价格
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [goods_id, price]
+              properties:
+                goods_id: { type: integer }
+                price: { type: string, description: decimal字符串 }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/supplier/Order/Paging:
+    post:
+      tags: [OpenAPI-Supplier]
+      summary: 供货商订单列表
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                page: { type: integer, default: 1 }
+                pageSize: { type: integer, default: 20 }
+                status: { type: integer }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/supplier/Order/Show:
+    post:
+      tags: [OpenAPI-Supplier]
+      summary: 订单详情
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                order_id: { type: integer }
+                order_sn: { type: string }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/supplier/Order/StatusHandle:
+    post:
+      tags: [OpenAPI-Supplier]
+      summary: 订单状态操作（发货等）
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, action]
+              properties:
+                order_id: { type: integer }
+                action: { type: string }
+                cards: { type: array, items: { type: string }, description: 卡密列表（发货时） }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /openapi/supplier/Order/ScheduleHandle:
+    post:
+      tags: [OpenAPI-Supplier]
+      summary: 定时发货处理
+      security: [{ LegacySignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id: { type: integer }
+                schedule_time: { type: integer, description: Unix时间戳 }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  # ══════════ Tenant Admin ══════════
+  /tenant-admin/dashboard:
+    get:
+      tags: [TenantAdmin]
+      summary: 租户大盘数据
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /tenant-admin/orders:
+    get:
+      tags: [TenantAdmin]
+      summary: 租户订单列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /tenant-admin/orders/{id}:
+    get:
+      tags: [TenantAdmin]
+      summary: 租户订单详情
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /tenant-admin/goods:
+    get:
+      tags: [TenantAdmin]
+      summary: 租户商品列表
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/SizeParam"
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /tenant-admin/goods/{id}/status:
+    patch:
+      tags: [TenantAdmin]
+      summary: 租户商品上下架
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: integer, enum: [0, 1] }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /tenant-admin/admins:
+    get:
+      tags: [TenantAdmin]
+      summary: 租户管理员列表
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+    post:
+      tags: [TenantAdmin]
+      summary: 添加租户管理员
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string }
+                password: { type: string }
+                role: { type: string, enum: [boss, finance, ops, support] }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /tenant-admin/admins/{id}:
+    delete:
+      tags: [TenantAdmin]
+      summary: 移除租户管理员
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdParam" }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /tenant-admin/subscription:
+    get:
+      tags: [TenantAdmin]
+      summary: 当前订阅信息
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /tenant-admin/usage:
+    get:
+      tags: [TenantAdmin]
+      summary: 用量统计
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+  /tenant-admin/subscription/upgrade:
+    post:
+      tags: [TenantAdmin]
+      summary: 升级订阅套餐
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id]
+              properties:
+                plan_id: { type: integer }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/Response" } } } }
+
+# ════════════════════════════════════
+# Components
+# ════════════════════════════════════
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 管理后台JWT认证，通过 POST /auth/login 获取
+    LegacySignature:
+      type: apiKey
+      in: header
+      name: AppToken
+      description: |
+        Legacy签名认证（/openapi/*）。需同时传递：
+        AppId, AppTimestamp, AppToken=SHA1(AppId+AppSecret+URI+Timestamp), AppNonce(可选)
+
+  parameters:
+    IdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    PageParam:
+      name: page
+      in: query
+      schema: { type: integer, default: 1, minimum: 1 }
+    SizeParam:
+      name: size
+      in: query
+      schema: { type: integer, default: 20, maximum: 100 }
+
+  schemas:
+    Response:
+      type: object
+      properties:
+        code: { type: integer, description: "0成功/1业务错误/2参数错误/100认证错误/429限流", example: 0 }
+        message: { type: string, example: "success" }
+        data: { description: 业务数据 }
+
+    PaginatedList:
+      type: object
+      properties:
+        list: { type: array, items: {} }
+        total: { type: integer }
+        page: { type: integer }
+        size: { type: integer }
+
+    UserItem:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        nickname: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        role: { type: string, enum: [admin, supplier, customer] }
+        status: { type: integer, description: "0=禁用,1=启用" }
+        created_at: { type: integer, description: Unix时间戳 }
+        updated_at: { type: integer }
+
+    GoodsItem:
+      type: object
+      properties:
+        id: { type: integer }
+        serial_number: { type: string }
+        name: { type: string }
+        price: { type: string, description: decimal字符串 }
+        cost_price: { type: string }
+        stock: { type: integer }
+        status: { type: integer, description: "0=下架,1=上架" }
+        category_id: { type: integer }
+        supplier_id: { type: integer }
+        created_at: { type: integer }
+        updated_at: { type: integer }
+
+    RefundItem:
+      type: object
+      properties:
+        id: { type: integer }
+        refund_sn: { type: string }
+        order_id: { type: integer }
+        order_sn: { type: string }
+        customer_id: { type: integer }
+        amount: { type: string }
+        reason: { type: string }
+        status: { type: integer, description: "0=待审核,1=已批准,2=已拒绝,3=已退款" }
+        reviewer_id: { type: integer, nullable: true }
+        review_note: { type: string }
+        reviewed_at: { type: integer, nullable: true }
+        refunded_at: { type: integer, nullable: true }
+        created_at: { type: integer }
+        updated_at: { type: integer }
+
+    RechargeItem:
+      type: object
+      properties:
+        id: { type: integer }
+        recharge_sn: { type: string }
+        user_id: { type: integer }
+        amount: { type: string }
+        status: { type: integer, description: "0=待审核,1=已批准,2=已拒绝" }
+        approver_id: { type: integer, nullable: true }
+        approval_note: { type: string }
+        approved_at: { type: integer, nullable: true }
+        created_at: { type: integer }
+        updated_at: { type: integer }
+
+    DockingTaskItem:
+      type: object
+      properties:
+        id: { type: integer }
+        order_id: { type: integer }
+        supplier_id: { type: integer }
+        external_order_id: { type: string }
+        status: { type: integer }
+        retry_count: { type: integer }
+        max_retry: { type: integer }
+        error_message: { type: string }
+        is_manual_retry: { type: boolean }
+        last_failure_at: { type: integer, nullable: true }
+        created_at: { type: integer }
+        updated_at: { type: integer }
+
+    AuditLogItem:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        username: { type: string }
+        action: { type: string, description: "如user.create、goods.approve" }
+        resource: { type: string }
+        resource_id: { type: integer }
+        detail: { type: string }
+        ip: { type: string }
+        created_at: { type: integer }
+
+    PricingRuleCreate:
+      type: object
+      required: [goods_id, rule_type]
+      properties:
+        goods_id: { type: integer }
+        rule_type: { type: string, description: "fixed/discount/tiered" }
+        customer_group_id: { type: integer }
+        min_quantity: { type: integer, default: 1 }
+        max_quantity: { type: integer, default: 999999 }
+        price: { type: string }
+        discount_percent: { type: string }
+        promotion_name: { type: string }
+        start_at: { type: integer, nullable: true }
+        end_at: { type: integer, nullable: true }
+        priority: { type: integer }
+        status: { type: integer, default: 1 }
+
+    BillingPlanItem:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        display_name: { type: string }
+        monthly_price: { type: string }
+        max_api_calls_per_month: { type: integer }
+        max_orders: { type: integer }
+        max_admins: { type: integer }
+        features: { type: string }
+        status: { type: integer }
+
+    PeriodStats:
+      type: object
+      properties:
+        date: { type: string }
+        total_orders: { type: integer }
+        total_amount: { type: string }
+        total_refunds: { type: integer }
+        refund_amount: { type: string }
+        new_customers: { type: integer }
+        active_customers: { type: integer }

@@ -8,6 +8,7 @@ import (
 	"github.com/70548887/sup-platform/internal/module/account"
 	"github.com/70548887/sup-platform/internal/module/analytics"
 	"github.com/70548887/sup-platform/internal/module/audit"
+	"github.com/70548887/sup-platform/internal/module/auth"
 	"github.com/70548887/sup-platform/internal/module/billing"
 	"github.com/70548887/sup-platform/internal/module/card"
 	"github.com/70548887/sup-platform/internal/module/docking"
@@ -74,6 +75,10 @@ func RunAll(db *gorm.DB) error {
 	// Phase 5 结算模块迁移
 	if err := settlement.Migrate(db); err != nil {
 		return fmt.Errorf("settlement migrate: %w", err)
+	}
+	// 认证模块迁移（ApiApp扩展 + LoginLog）
+	if err := auth.Migrate(db); err != nil {
+		return fmt.Errorf("auth migrate: %w", err)
 	}
 	// 多租户数据迁移：确保现有数据tenant_id=1
 	if err := tenant.MigrateExistingData(db); err != nil {

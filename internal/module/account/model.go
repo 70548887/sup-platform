@@ -11,6 +11,18 @@ type User struct {
 	Phone     string `gorm:"size:20"`
 	Role      string `gorm:"size:20;not null;index"`  // admin/supplier/customer
 	Status    int8   `gorm:"not null;default:1"`      // 1活跃 0禁用
+
+	// 安全相关字段
+	LastLoginAt   int64  `gorm:"column:last_login_at" json:"last_login_at"`
+	LastLoginIP   string `gorm:"column:last_login_ip;size:45" json:"last_login_ip"`
+	LastLoginUA   string `gorm:"column:last_login_ua;size:500" json:"last_login_ua"`
+	LoginAttempts int    `gorm:"column:login_attempts;default:0" json:"login_attempts"`
+	LockedUntil   int64  `gorm:"column:locked_until" json:"locked_until"`
+
+	// 个人信息扩展
+	AvatarURL string `gorm:"column:avatar_url;size:500" json:"avatar_url"`
+	RealName  string `gorm:"column:real_name;size:50" json:"real_name"`
+
 	CreatedAt int64  `gorm:"autoCreateTime"`
 	UpdatedAt int64  `gorm:"autoUpdateTime"`
 }

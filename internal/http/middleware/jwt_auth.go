@@ -1,9 +1,12 @@
 package middleware
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/70548887/sup-platform/internal/http/response"
 	"github.com/70548887/sup-platform/internal/module/auth"
@@ -19,9 +22,10 @@ const (
 // 验证流程：
 // 1. 从Header Authorization: Bearer <token> 或 Cookie auth_token 提取token
 // 2. 验证JWT签名和过期时间
-// 3. 提取UserID和Role
-// 4. 注入gin.Context
-func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
+// 3. 检查token是否在黑名单中（Redis）
+// 4. 提取UserID和Role
+// 5. 注入gin.Context
+func JWTAuth(authService *auth.AuthService, redisClient *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. 从Header或Cookie提取token
 		tokenString := extractToken(c)
@@ -39,7 +43,18 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 			return
 		}
 
-		// 3-4. 提取UserID和Role，注入Context
+		// 3. 检查token黑名单（Redis可用时）
+		if redisClient != nil {
+			tokenHash := fmt.Sprintf("%x", sha256.Sum256([]byte(tokenString)))[:16]
+			blacklistKey := fmt.Sprintf("token_blacklist:%s", tokenHash)
+			if exists, _ := redisClient.Exists(c, blacklistKey).Result(); exists > 0 {
+				response.AuthError(c, "token已失效，请重新登录")
+				c.Abort()
+				return
+			}
+		}
+
+		// 4-5. 提取UserID和Role，注入Context
 		c.Set(ContextKeyUserID, claims.UserID)
 		c.Set(ContextKeyRole, claims.Role)
 		c.Set("tenant_id", claims.TenantID)
@@ -48,9 +63,9 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 	}
 }
 
-// JWTAuthWithRole JWT认证中间件（带角色校验）
+// JWTAuthWithRole JWT认证中间件（带角色校验+黑名单检查）
 // 只允许指定角色访问
-func JWTAuthWithRole(authService *auth.AuthService, allowedRoles ...string) gin.HandlerFunc {
+func JWTAuthWithRole(authService *auth.AuthService, redisClient *redis.Client, allowedRoles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 从Header或Cookie提取token
 		tokenString := extractToken(c)
@@ -65,6 +80,17 @@ func JWTAuthWithRole(authService *auth.AuthService, allowedRoles ...string) gin.
 			response.AuthError(c, "token无效或已过期")
 			c.Abort()
 			return
+		}
+
+		// 检查token黑名单（Redis可用时）
+		if redisClient != nil {
+			tokenHash := fmt.Sprintf("%x", sha256.Sum256([]byte(tokenString)))[:16]
+			blacklistKey := fmt.Sprintf("token_blacklist:%s", tokenHash)
+			if exists, _ := redisClient.Exists(c, blacklistKey).Result(); exists > 0 {
+				response.AuthError(c, "token已失效，请重新登录")
+				c.Abort()
+				return
+			}
 		}
 
 		// 校验角色
