@@ -32,7 +32,7 @@ func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 		if allowed {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-App-Id, X-App-Timestamp, X-App-Token, AppId, AppTimestamp, AppToken, Appid, Apptimestamp, Apptoken, AppNonce, Appnonce")
+			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-App-Id, X-App-Timestamp, X-App-Token, AppId, AppTimestamp, AppToken, Appid, Apptimestamp, Apptoken, AppNonce, Appnonce, X-CSRF-Token")
 			c.Header("Access-Control-Max-Age", "86400")
 			c.Header("Access-Control-Allow-Credentials", "true")
 		}

@@ -14,8 +14,9 @@ var DefaultCommissionRate = decimal.NewFromFloat(0.05)
 
 // SettlementService 结算分润服务
 type SettlementService struct {
-	db   *gorm.DB
-	repo *SettlementRepository
+	db          *gorm.DB
+	repo        *SettlementRepository
+	aggregateFn func(supplierID uint, period string) (*AggregateResult, error) // 可覆盖的聚合函数（用于测试）
 }
 
 // NewSettlementService 创建结算服务
@@ -37,7 +38,7 @@ func (s *SettlementService) GenerateSettlement(ctx context.Context, supplierID u
 	}
 
 	// 聚合该供货商该月已完成订单
-	agg, err := s.repo.AggregateOrdersBySupplier(supplierID, period)
+	agg, err := s.aggregate(supplierID, period)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +127,14 @@ func (s *SettlementService) CalculateProfitShare(ctx context.Context, orderID ui
 	}
 
 	return ps, nil
+}
+
+// aggregate 执行聚合查询，优先使用可覆盖的 aggregateFn（用于测试替换）
+func (s *SettlementService) aggregate(supplierID uint, period string) (*AggregateResult, error) {
+	if s.aggregateFn != nil {
+		return s.aggregateFn(supplierID, period)
+	}
+	return s.repo.AggregateOrdersBySupplier(supplierID, period)
 }
 
 // ListSettlements 查询结算单列表

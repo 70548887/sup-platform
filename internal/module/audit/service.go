@@ -53,6 +53,11 @@ func (s *AuditService) GetByID(ctx context.Context, id uint) (*AuditLog, error) 
 	return s.repo.GetByID(ctx, id)
 }
 
+// GetStats 获取审计统计信息
+func (s *AuditService) GetStats(ctx context.Context) (*AuditStats, error) {
+	return s.repo.Stats(ctx)
+}
+
 // NewEntry 辅助构造方法，快速创建审计日志条目
 func NewEntry(userID uint, username, action, resource string, resourceID uint, detail string) *AuditLog {
 	return &AuditLog{

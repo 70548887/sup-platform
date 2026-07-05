@@ -1,0 +1,113 @@
+# SUP Platform Helm Chart - 默认配置
+
+# -- 镜像配置
+image:
+  repository: sup-platform
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# -- 镜像拉取凭证
+imagePullSecrets: []
+
+# -- API服务副本数
+replicaCount: 3
+
+# -- API服务资源配置
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+# -- Service配置
+service:
+  type: ClusterIP
+  port: 8080
+
+# -- Ingress配置
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  host: sup.local
+  tls:
+    enabled: false
+    secretName: ""
+
+# -- 健康检查探针
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: /readiness
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# -- 优雅终止等待时间
+terminationGracePeriodSeconds: 30
+
+# -- HPA 自动扩缩配置
+hpa:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPU: 70
+
+# -- PDB Pod中断预算
+pdb:
+  enabled: true
+  minAvailable: 2
+
+# -- Worker服务配置
+worker:
+  enabled: true
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -- 数据库迁移Job
+migration:
+  enabled: true
+
+# -- 应用非敏感配置
+config:
+  appName: sup-platform
+  appPort: "8080"
+  appMode: release
+  dbHost: mysql
+  dbPort: "3306"
+  dbUser: root
+  dbName: sup_platform
+  redisAddr: "redis:6379"
+  redisDB: "0"
+  redisEnabled: "true"
+  redisPrefix: sup
+  jwtExpire: "72"
+  multiTenantEnabled: "false"
+  defaultTenantId: "1"
+
+# -- 敏感配置（生产环境必须修改）
+secrets:
+  dbPassword: ""
+  redisPassword: ""
+  jwtSecret: ""
+  cardEncryptKey: ""
+  adminPassword: ""
+
+# -- 初始化配置
+init:
+  tenantName: "我的公司"
+  adminUsername: admin

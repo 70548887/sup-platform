@@ -42,7 +42,17 @@ func (s *QueueServer) HandleFunc(pattern string, handler func(context.Context, *
 	s.mux.HandleFunc(pattern, handler)
 }
 
-// Run 启动Worker
+// Run 启动Worker（阻塞，内部处理信号）
 func (s *QueueServer) Run() error {
 	return s.server.Run(s.mux)
+}
+
+// Start 非阻塞启动Worker
+func (s *QueueServer) Start() error {
+	return s.server.Start(s.mux)
+}
+
+// Shutdown 优雅关闭Worker
+func (s *QueueServer) Shutdown() {
+	s.server.Shutdown()
 }

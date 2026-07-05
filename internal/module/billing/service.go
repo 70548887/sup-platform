@@ -2,12 +2,10 @@ package billing
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/70548887/sup-platform/internal/pkg/cache"
 	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -22,105 +20,32 @@ type BillingService struct {
 	repo        *BillingRepository
 	redisClient *redis.Client
 	prefix      string
+	cache       cache.CacheProvider
+	quota       *QuotaService
 }
 
 // NewBillingService 创建计费服务实例
 func NewBillingService(db *gorm.DB, redisClient *redis.Client, prefix string) *BillingService {
+	repo := NewBillingRepository(db)
+	c := cache.NewRedisCache(redisClient, prefix)
 	return &BillingService{
 		db:          db,
-		repo:        NewBillingRepository(db),
+		repo:        repo,
 		redisClient: redisClient,
 		prefix:      prefix,
+		cache:       c,
+		quota:       NewQuotaService(repo, c, db),
 	}
 }
 
-// quotaCache Redis缓存结构
-type quotaCache struct {
-	Allowed   bool `json:"allowed"`
-	Remaining int  `json:"remaining"`
-}
-
-// CheckQuota 检查租户API配额
-// Redis key: {prefix}:tenant:{tenantID}:quota, TTL=5min
-// 降级：Redis不可用时查DB
+// CheckQuota 检查租户API配额（委托给配额子服务）
 func (s *BillingService) CheckQuota(ctx context.Context, tenantID uint) (allowed bool, remaining int, err error) {
-	cacheKey := fmt.Sprintf("%s:tenant:%d:quota", s.prefix, tenantID)
-
-	// 尝试从Redis读取缓存
-	if s.redisClient != nil {
-		cached, redisErr := s.redisClient.Get(ctx, cacheKey).Result()
-		if redisErr == nil && cached != "" {
-			var qc quotaCache
-			if jsonErr := json.Unmarshal([]byte(cached), &qc); jsonErr == nil {
-				return qc.Allowed, qc.Remaining, nil
-			}
-		}
-		// Redis错误时静默降级，继续查DB
-	}
-
-	// Redis miss或不可用，查DB
-	_, plan, err := s.repo.GetSubscriptionWithPlan(tenantID)
-	if err != nil {
-		// 区分无订阅和系统错误
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// 无订阅的租户：拒绝访问
-			return false, 0, nil
-		}
-		return false, 0, fmt.Errorf("billing: check quota get subscription: %w", err)
-	}
-
-	now := time.Now()
-	usage, err := s.repo.GetOrCreateUsage(tenantID, now.Year(), int(now.Month()))
-	if err != nil {
-		return false, 0, fmt.Errorf("billing: check quota get usage: %w", err)
-	}
-
-	remaining = plan.MaxAPICallsPerMonth - usage.APICallCount
-	allowed = remaining > 0
-
-	// 写入Redis缓存
-	if s.redisClient != nil {
-		qc := quotaCache{Allowed: allowed, Remaining: remaining}
-		if data, jsonErr := json.Marshal(qc); jsonErr == nil {
-			_ = s.redisClient.Set(ctx, cacheKey, data, 5*time.Minute).Err()
-		}
-	}
-
-	return allowed, remaining, nil
+	return s.quota.CheckQuota(ctx, tenantID)
 }
 
-// RecordAPICall 记录一次API调用
-// CAS重试3次，失败仅log不返回error
+// RecordAPICall 记录一次API调用（委托给配额子服务）
 func (s *BillingService) RecordAPICall(ctx context.Context, tenantID uint) error {
-	now := time.Now()
-	usage, err := s.repo.GetOrCreateUsage(tenantID, now.Year(), int(now.Month()))
-	if err != nil {
-		log.Printf("billing: record api call get usage failed: tenant=%d err=%v", tenantID, err)
-		return nil
-	}
-
-	// CAS重试3次
-	for i := 0; i < 3; i++ {
-		ok, casErr := s.repo.IncrementAPIUsageCAS(usage.ID, usage.Version)
-		if casErr != nil {
-			log.Printf("billing: record api call CAS error: tenant=%d err=%v", tenantID, casErr)
-			return nil
-		}
-		if ok {
-			// 成功后删除Redis配额缓存
-			s.invalidateQuotaCache(ctx, tenantID)
-			return nil
-		}
-		// CAS冲突，重新读取version
-		usage, err = s.repo.GetOrCreateUsage(tenantID, now.Year(), int(now.Month()))
-		if err != nil {
-			log.Printf("billing: record api call reload usage failed: tenant=%d err=%v", tenantID, err)
-			return nil
-		}
-	}
-
-	log.Printf("billing: record api call CAS exhausted retries: tenant=%d", tenantID)
-	return nil
+	return s.quota.RecordAPICall(ctx, tenantID)
 }
 
 // GenerateMonthlyInvoice 生成月度账单
@@ -297,14 +222,9 @@ func (s *BillingService) GetSubscription(ctx context.Context, tenantID uint) (*T
 	return sub, plan, nil
 }
 
-// GetUsage 获取租户当月使用量
+// GetUsage 获取租户当月使用量（委托给配额子服务）
 func (s *BillingService) GetUsage(ctx context.Context, tenantID uint) (*APIUsage, error) {
-	now := time.Now()
-	usage, err := s.repo.GetOrCreateUsage(tenantID, now.Year(), int(now.Month()))
-	if err != nil {
-		return nil, fmt.Errorf("billing: get usage: %w", err)
-	}
-	return usage, nil
+	return s.quota.GetUsage(ctx, tenantID)
 }
 
 // ListPlans 获取所有有效套餐
@@ -316,11 +236,7 @@ func (s *BillingService) ListPlans(ctx context.Context) ([]SubscriptionPlan, err
 	return plans, nil
 }
 
-// invalidateQuotaCache 删除Redis配额缓存
+// invalidateQuotaCache 删除配额缓存（委托给配额子服务）
 func (s *BillingService) invalidateQuotaCache(ctx context.Context, tenantID uint) {
-	if s.redisClient == nil {
-		return
-	}
-	cacheKey := fmt.Sprintf("%s:tenant:%d:quota", s.prefix, tenantID)
-	_ = s.redisClient.Del(ctx, cacheKey).Err()
+	s.quota.invalidateQuotaCache(ctx, tenantID)
 }

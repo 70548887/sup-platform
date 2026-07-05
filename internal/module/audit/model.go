@@ -30,6 +30,13 @@ const (
 	ActionCardImport    = "card.import"
 )
 
+// AuditStats 审计统计信息
+type AuditStats struct {
+	Total      int64            // 总日志数
+	ByAction   map[string]int64 // 按操作类型统计
+	ByResource map[string]int64 // 按资源类型统计
+}
+
 // AuditFilter 审计日志查询过滤条件
 type AuditFilter struct {
 	UserID     uint   // 按操作者ID过滤

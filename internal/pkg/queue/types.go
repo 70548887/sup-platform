@@ -6,4 +6,5 @@ const (
 	TypeDockingSubmit      = "docking:submit"
 	TypeReconciliationRun  = "reconciliation:run"
 	TypeAnalyticsAggregate = "analytics:aggregate"
+	TypeCardImport         = "card:import"
 )

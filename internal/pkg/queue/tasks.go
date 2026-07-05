@@ -22,3 +22,10 @@ type ReconciliationPayload struct {
 type AnalyticsPayload struct {
 	Date string `json:"date"` // "2026-07-04"
 }
+
+// CardImportPayload 卡密导入任务载荷
+type CardImportPayload struct {
+	GoodsID   uint     `json:"goods_id"`
+	BatchName string   `json:"batch_name"`
+	Contents  []string `json:"contents"`
+}

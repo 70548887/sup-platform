@@ -1,9 +1,14 @@
 package settlement
 
 import (
+	"errors"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
+
+// ErrDuplicatePeriod 同一供货商同一周期重复生成结算单
+var ErrDuplicatePeriod = errors.New("该供货商该周期已存在结算单")
 
 // SettlementRepository 结算数据访问层
 type SettlementRepository struct {
@@ -15,8 +20,17 @@ func NewSettlementRepository(db *gorm.DB) *SettlementRepository {
 	return &SettlementRepository{db: db}
 }
 
-// CreateSettlement 创建结算单
+// CreateSettlement 创建结算单（含周期唯一性检查）
 func (r *SettlementRepository) CreateSettlement(s *Settlement) error {
+	var count int64
+	if err := r.db.Model(&Settlement{}).
+		Where("supplier_id = ? AND period = ?", s.SupplierID, s.Period).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrDuplicatePeriod
+	}
 	return r.db.Create(s).Error
 }
 

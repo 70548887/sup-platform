@@ -3,9 +3,13 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"log"
+	"math"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // LedgerService 账本服务
@@ -135,6 +139,191 @@ func (s *LedgerService) Credit(ctx context.Context, tx *gorm.DB, userID uint, am
 		return fmt.Errorf("ledger: create entry failed: %w", err)
 	}
 
+	return nil
+}
+
+// DebitWithRetry 带CAS重试的扣款方法（推荐调用入口）
+// 最多重试maxRetries次，指数退避，全部失败后降级为行级锁
+func (s *LedgerService) DebitWithRetry(ctx context.Context, tx *gorm.DB, userID uint, amount decimal.Decimal, typ string, relatedID uint, note string, maxRetries int) error {
+	if amount.LessThanOrEqual(decimal.Zero) {
+		return fmt.Errorf("ledger: debit amount must be positive, got %s", amount.String())
+	}
+	if maxRetries <= 0 {
+		maxRetries = 3
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// 读取最新wallet
+		wallet, err := s.repo.GetWalletWithTx(ctx, tx, userID)
+		if err != nil {
+			return fmt.Errorf("ledger: get wallet failed: %w", err)
+		}
+
+		// 检查余额
+		if wallet.Balance.LessThan(amount) {
+			return ErrInsufficientBalance
+		}
+
+		// 计算新余额
+		newBalance := wallet.Balance.Sub(amount)
+
+		// CAS更新
+		ok, err := s.repo.UpdateWalletCAS(ctx, tx, wallet.ID, newBalance, wallet.Version)
+		if err != nil {
+			return fmt.Errorf("ledger: update wallet failed: %w", err)
+		}
+		if ok {
+			// CAS成功，创建流水记录
+			entry := &LedgerEntry{
+				WalletID:     wallet.ID,
+				UserID:       userID,
+				Type:         typ,
+				RelatedID:    relatedID,
+				Amount:       amount.Neg(),
+				BalanceAfter: newBalance,
+				Note:         note,
+			}
+			if err := s.repo.CreateEntry(ctx, tx, entry); err != nil {
+				return fmt.Errorf("ledger: create entry failed: %w", err)
+			}
+			return nil
+		}
+
+		// CAS失败，指数退避重试
+		lastErr = ErrWalletCASConflict
+		if attempt < maxRetries-1 {
+			backoff := time.Duration(math.Pow(2, float64(attempt))) * 10 * time.Millisecond
+			time.Sleep(backoff)
+			log.Printf("[WARN] Wallet CAS conflict for user %d, retry %d/%d", userID, attempt+1, maxRetries)
+		}
+	}
+
+	// 所有重试失败，降级为行级锁
+	log.Printf("[WARN] CAS retries exhausted for user %d, falling back to row lock", userID)
+	_ = lastErr
+	return s.debitWithLock(ctx, tx, userID, amount, typ, relatedID, note)
+}
+
+// debitWithLock 降级方法：使用行级锁保证一致性
+func (s *LedgerService) debitWithLock(ctx context.Context, tx *gorm.DB, userID uint, amount decimal.Decimal, typ string, relatedID uint, note string) error {
+	var wallet Wallet
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", userID).First(&wallet).Error; err != nil {
+		return fmt.Errorf("ledger: get wallet with lock failed: %w", err)
+	}
+
+	if wallet.Balance.LessThan(amount) {
+		return ErrInsufficientBalance
+	}
+
+	newBalance := wallet.Balance.Sub(amount)
+	if err := tx.WithContext(ctx).Model(&wallet).Updates(map[string]interface{}{
+		"balance": newBalance,
+		"version": wallet.Version + 1,
+	}).Error; err != nil {
+		return fmt.Errorf("ledger: update wallet failed: %w", err)
+	}
+
+	entry := &LedgerEntry{
+		WalletID:     wallet.ID,
+		UserID:       userID,
+		Type:         typ,
+		RelatedID:    relatedID,
+		Amount:       amount.Neg(),
+		BalanceAfter: newBalance,
+		Note:         note,
+	}
+	if err := s.repo.CreateEntry(ctx, tx, entry); err != nil {
+		return fmt.Errorf("ledger: create entry failed: %w", err)
+	}
+	return nil
+}
+
+// CreditWithRetry 带CAS重试的入账方法（推荐调用入口）
+// 最多重试maxRetries次，指数退避，全部失败后降级为行级锁
+func (s *LedgerService) CreditWithRetry(ctx context.Context, tx *gorm.DB, userID uint, amount decimal.Decimal, typ string, relatedID uint, note string, maxRetries int) error {
+	if amount.LessThanOrEqual(decimal.Zero) {
+		return fmt.Errorf("ledger: credit amount must be positive, got %s", amount.String())
+	}
+	if maxRetries <= 0 {
+		maxRetries = 3
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// 读取最新wallet
+		wallet, err := s.repo.GetWalletWithTx(ctx, tx, userID)
+		if err != nil {
+			return fmt.Errorf("ledger: get wallet failed: %w", err)
+		}
+
+		// 计算新余额
+		newBalance := wallet.Balance.Add(amount)
+
+		// CAS更新
+		ok, err := s.repo.UpdateWalletCAS(ctx, tx, wallet.ID, newBalance, wallet.Version)
+		if err != nil {
+			return fmt.Errorf("ledger: update wallet failed: %w", err)
+		}
+		if ok {
+			// CAS成功，创建流水记录
+			entry := &LedgerEntry{
+				WalletID:     wallet.ID,
+				UserID:       userID,
+				Type:         typ,
+				RelatedID:    relatedID,
+				Amount:       amount,
+				BalanceAfter: newBalance,
+				Note:         note,
+			}
+			if err := s.repo.CreateEntry(ctx, tx, entry); err != nil {
+				return fmt.Errorf("ledger: create entry failed: %w", err)
+			}
+			return nil
+		}
+
+		// CAS失败，指数退避重试
+		lastErr = ErrWalletCASConflict
+		if attempt < maxRetries-1 {
+			backoff := time.Duration(math.Pow(2, float64(attempt))) * 10 * time.Millisecond
+			time.Sleep(backoff)
+			log.Printf("[WARN] Wallet CAS conflict for user %d (credit), retry %d/%d", userID, attempt+1, maxRetries)
+		}
+	}
+
+	// 所有重试失败，降级为行级锁
+	log.Printf("[WARN] CAS retries exhausted for user %d (credit), falling back to row lock", userID)
+	_ = lastErr
+	return s.creditWithLock(ctx, tx, userID, amount, typ, relatedID, note)
+}
+
+// creditWithLock 入账降级方法：使用行级锁保证一致性
+func (s *LedgerService) creditWithLock(ctx context.Context, tx *gorm.DB, userID uint, amount decimal.Decimal, typ string, relatedID uint, note string) error {
+	var wallet Wallet
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", userID).First(&wallet).Error; err != nil {
+		return fmt.Errorf("ledger: get wallet with lock failed: %w", err)
+	}
+
+	newBalance := wallet.Balance.Add(amount)
+	if err := tx.WithContext(ctx).Model(&wallet).Updates(map[string]interface{}{
+		"balance": newBalance,
+		"version": wallet.Version + 1,
+	}).Error; err != nil {
+		return fmt.Errorf("ledger: update wallet failed: %w", err)
+	}
+
+	entry := &LedgerEntry{
+		WalletID:     wallet.ID,
+		UserID:       userID,
+		Type:         typ,
+		RelatedID:    relatedID,
+		Amount:       amount,
+		BalanceAfter: newBalance,
+		Note:         note,
+	}
+	if err := s.repo.CreateEntry(ctx, tx, entry); err != nil {
+		return fmt.Errorf("ledger: create entry failed: %w", err)
+	}
 	return nil
 }
 

@@ -46,8 +46,8 @@ func (s *PricingService) CalculatePrice(ctx context.Context, goodsID uint, custo
 		}
 	}
 
-	// 2. 尝试从Redis缓存读取规则
-	cacheKey := fmt.Sprintf("%s:pricing:%d", s.prefix, goodsID)
+	// 2. 尝试从Redis缓存读取规则（key含quantity维度）
+	cacheKey := fmt.Sprintf("%s:pricing:%d:%d", s.prefix, goodsID, quantity)
 	var rules []PricingRule
 	cacheHit := false
 
@@ -70,9 +70,11 @@ func (s *PricingService) CalculatePrice(ctx context.Context, goodsID uint, custo
 			return basePrice, nil
 		}
 
-		// 4. 写入Redis缓存（TTL = 3600 + rand(0,300) 秒）
+		// 4. 写入Redis缓存（基础TTL 1小时 + 随机偏移±5分钟防雪崩）
 		if s.redisClient != nil {
-			ttl := time.Duration(3600+rand.Intn(300)) * time.Second
+			baseTTL := time.Hour
+			randomOffset := time.Duration(rand.Intn(600)-300) * time.Second
+			ttl := baseTTL + randomOffset
 			if data, jsonErr := json.Marshal(rules); jsonErr == nil {
 				_ = s.redisClient.Set(ctx, cacheKey, data, ttl).Err()
 			}
@@ -231,11 +233,24 @@ func (s *PricingService) RemoveMember(ctx context.Context, groupID, customerID u
 	return s.repo.RemoveMember(groupID, customerID)
 }
 
-// invalidateCache 删除Redis定价缓存
-func (s *PricingService) invalidateCache(ctx context.Context, goodsID uint) {
+// InvalidateGoodsPricingCache 当定价规则变更时调用，批量清除该商品所有定价缓存
+func (s *PricingService) InvalidateGoodsPricingCache(ctx context.Context, goodsID uint) error {
 	if s.redisClient == nil {
-		return
+		return nil
 	}
-	cacheKey := fmt.Sprintf("%s:pricing:%d", s.prefix, goodsID)
-	_ = s.redisClient.Del(ctx, cacheKey).Err()
+	// 使用通配符删除该商品所有quantity维度的缓存
+	pattern := fmt.Sprintf("%s:pricing:%d:*", s.prefix, goodsID)
+	keys, err := s.redisClient.Keys(ctx, pattern).Result()
+	if err != nil {
+		return err
+	}
+	if len(keys) > 0 {
+		return s.redisClient.Del(ctx, keys...).Err()
+	}
+	return nil
+}
+
+// invalidateCache 内部调用，删除Redis定价缓存
+func (s *PricingService) invalidateCache(ctx context.Context, goodsID uint) {
+	_ = s.InvalidateGoodsPricingCache(ctx, goodsID)
 }

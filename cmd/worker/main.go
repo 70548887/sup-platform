@@ -2,36 +2,42 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/70548887/sup-platform/internal/adapter"
 	"github.com/70548887/sup-platform/internal/adapter/yike"
 	"github.com/70548887/sup-platform/internal/adapter/yile"
 	"github.com/70548887/sup-platform/internal/adapter/zhike"
 	"github.com/70548887/sup-platform/internal/module/analytics"
+	"github.com/70548887/sup-platform/internal/module/card"
 	"github.com/70548887/sup-platform/internal/module/docking"
 	"github.com/70548887/sup-platform/internal/module/notify"
 	"github.com/70548887/sup-platform/internal/module/reconciliation"
+	"github.com/70548887/sup-platform/internal/pkg/logger"
 	"github.com/70548887/sup-platform/internal/pkg/queue"
 )
 
 // 包级别服务变量
 var (
-	notifySvc     *notify.NotifyService
-	dockingSvc    *docking.DockingService
-	reconcileSvc  *reconciliation.ReconciliationService
-	analyticsSvc  *analytics.AnalyticsService
+	notifySvc    *notify.NotifyService
+	dockingSvc   *docking.DockingService
+	reconcileSvc *reconciliation.ReconciliationService
+	analyticsSvc *analytics.AnalyticsService
+	cardSvc      *card.CardService
 )
 
 func main() {
@@ -47,7 +53,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("[FATAL] Worker DB connect failed: %v", err)
 	}
-	log.Printf("[INFO] Worker DB connected successfully")
+	logger.Default().Info(context.Background(), "worker DB connected successfully")
 
 	// 初始化Redis客户端（供AnalyticsService使用）
 	redisClient := connectRedis(redisAddr, redisPassword, redisDB)
@@ -63,11 +69,23 @@ func main() {
 	srv.HandleFunc(queue.TypeDockingSubmit, handleDockingSubmit)
 	srv.HandleFunc(queue.TypeReconciliationRun, handleReconciliation)
 	srv.HandleFunc(queue.TypeAnalyticsAggregate, handleAnalyticsAggregate)
+	srv.HandleFunc(queue.TypeCardImport, handleCardImport)
 
-	log.Printf("[INFO] Worker starting with concurrency=%d, redis=%s, db=%d", concurrency, redisAddr, redisDB)
-	if err := srv.Run(); err != nil {
-		log.Fatalf("Worker failed: %v", err)
+	logger.Default().Info(context.Background(), "worker starting", "concurrency", concurrency, "redis", redisAddr, "db", redisDB)
+
+	// 非阻塞启动Worker
+	if err := srv.Start(); err != nil {
+		log.Fatalf("[FATAL] Worker start failed: %v", err)
 	}
+
+	// 监听系统信号
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Default().Info(context.Background(), "worker shutting down gracefully")
+	srv.Shutdown()
+	logger.Default().Info(context.Background(), "worker exited gracefully")
 }
 
 // initServices 初始化所有服务
@@ -100,7 +118,17 @@ func initServices(db *gorm.DB, redisClient *redis.Client, redisPrefix string) {
 	// 统计服务
 	analyticsSvc = analytics.NewAnalyticsService(db, redisClient, redisPrefix)
 
-	log.Printf("[INFO] Worker services initialized")
+	// 卡密服务
+	var cardEncryptKey []byte
+	if keyHex := os.Getenv("CARD_ENCRYPT_KEY"); keyHex != "" {
+		key, err := hex.DecodeString(keyHex)
+		if err == nil && len(key) == 32 {
+			cardEncryptKey = key
+		}
+	}
+	cardSvc = card.NewCardService(db, cardEncryptKey)
+
+	logger.Default().Info(context.Background(), "worker services initialized")
 }
 
 // connectDB 连接MySQL
@@ -118,7 +146,7 @@ func connectDB() (*gorm.DB, error) {
 	}
 
 	gormCfg := &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
+		Logger: gormlogger.Default.LogMode(gormlogger.Warn),
 	}
 
 	db, err := gorm.Open(mysql.Open(dsn), gormCfg)
@@ -143,10 +171,10 @@ func connectRedis(addr, password string, db int) *redis.Client {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
-		log.Printf("[WARN] Worker Redis connection failed: %v, analytics cache disabled", err)
+		logger.Default().Warn(ctx, "worker Redis connection failed, analytics cache disabled", "error", err)
 		return nil
 	}
-	log.Printf("[INFO] Worker Redis connected: %s db=%d", addr, db)
+	logger.Default().Info(ctx, "worker Redis connected", "addr", addr, "db", db)
 	return client
 }
 
@@ -156,7 +184,7 @@ func handleWebhookDeliver(ctx context.Context, t *asynq.Task) error {
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return fmt.Errorf("webhook: unmarshal payload: %w", err)
 	}
-	log.Printf("[Worker] webhook deliver: callback_id=%d url=%s", p.CallbackID, p.URL)
+	logger.Default().Info(ctx, "webhook deliver", "callback_id", p.CallbackID, "url", p.URL)
 	return notifySvc.DeliverCallback(ctx, p.CallbackID)
 }
 
@@ -166,7 +194,7 @@ func handleDockingSubmit(ctx context.Context, t *asynq.Task) error {
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return fmt.Errorf("docking: unmarshal payload: %w", err)
 	}
-	log.Printf("[Worker] docking submit: task_id=%d order_sn=%s", p.TaskID, p.OrderSN)
+	logger.Default().Info(ctx, "docking submit", "task_id", p.TaskID, "order_sn", p.OrderSN)
 	return dockingSvc.ExecuteTask(ctx, p.TaskID)
 }
 
@@ -176,7 +204,7 @@ func handleReconciliation(ctx context.Context, t *asynq.Task) error {
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return fmt.Errorf("reconciliation: unmarshal payload: %w", err)
 	}
-	log.Printf("[Worker] reconciliation: type=%s", p.Type)
+	logger.Default().Info(ctx, "reconciliation", "type", p.Type)
 	switch p.Type {
 	case "balance_check":
 		_, err := reconcileSvc.RunBalanceCheck(ctx)
@@ -195,8 +223,19 @@ func handleAnalyticsAggregate(ctx context.Context, t *asynq.Task) error {
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return fmt.Errorf("analytics: unmarshal payload: %w", err)
 	}
-	log.Printf("[Worker] analytics aggregate: date=%s", p.Date)
+	logger.Default().Info(ctx, "analytics aggregate", "date", p.Date)
 	return analyticsSvc.AggregateDaily(ctx, p.Date)
+}
+
+// handleCardImport 处理卡密批量导入任务
+func handleCardImport(ctx context.Context, t *asynq.Task) error {
+	var p queue.CardImportPayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		return fmt.Errorf("card_import: unmarshal payload: %w", err)
+	}
+	logger.Default().Info(ctx, "card import", "goods_id", p.GoodsID, "batch", p.BatchName, "count", len(p.Contents))
+	_, err := cardSvc.ImportCards(ctx, p.GoodsID, p.BatchName, p.Contents)
+	return err
 }
 
 // getEnv 获取环境变量，不存在则返回默认值

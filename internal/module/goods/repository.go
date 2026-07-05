@@ -115,6 +115,59 @@ func (r *GoodsRepository) List(ctx context.Context, filter GoodsFilter) ([]*Good
 	return list, total, nil
 }
 
+// ListWithPreload 商品列表查询（预加载BuyParamList，消除N+1查询）
+func (r *GoodsRepository) ListWithPreload(ctx context.Context, filter GoodsFilter) ([]*Goods, int64, error) {
+	query := r.db.WithContext(ctx).Model(&Goods{})
+
+	if filter.CategoryID != nil {
+		query = query.Where("category_id = ?", *filter.CategoryID)
+	}
+	if filter.SupplierID != nil {
+		query = query.Where("supplier_id = ?", *filter.SupplierID)
+	}
+	if filter.Name != "" {
+		query = query.Where("name LIKE ?", "%"+filter.Name+"%")
+	}
+	if filter.SerialNumber != "" {
+		query = query.Where("serial_number = ?", filter.SerialNumber)
+	}
+	if filter.Status != nil {
+		query = query.Where("status = ?", *filter.Status)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("查询商品总数失败: %w", err)
+	}
+
+	// 分页
+	page := filter.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := filter.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	// 预加载购买参数定义，按sort_order排序
+	var list []*Goods
+	err := query.Preload("BuyParamList", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort_order ASC")
+	}).Order("id DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&list).Error
+	if err != nil {
+		return nil, 0, fmt.Errorf("查询商品列表失败: %w", err)
+	}
+
+	return list, total, nil
+}
+
 // DeductStock 扣减库存（事务内调用）
 // 使用 stock>=quantity 条件保证并发安全，RowsAffected=0 表示库存不足
 func (r *GoodsRepository) DeductStock(ctx context.Context, tx *gorm.DB, goodsID uint, quantity int) error {

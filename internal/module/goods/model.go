@@ -39,6 +39,9 @@ type Goods struct {
 	Status            int8            `gorm:"not null;default:1;index"` // 1上架 0下架
 	CreatedAt         int64           `gorm:"autoCreateTime"`
 	UpdatedAt         int64           `gorm:"autoUpdateTime"`
+
+	// 关联：购买参数定义列表（用于Preload预加载，消除N+1查询）
+	BuyParamList []GoodsBuyParam `gorm:"foreignKey:GoodsID" json:"buy_param_list,omitempty"`
 }
 
 // GoodsBuyParam 购买参数定义（独立表，便于管理复杂参数）

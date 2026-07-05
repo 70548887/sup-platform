@@ -9,6 +9,7 @@ type Tenant struct {
 	OwnerUserID uint   `gorm:"index"`
 	Status      int8   `gorm:"not null;default:1"` // 1=active, 0=disabled
 	MaxAdmins   int    `gorm:"default:5"`
+	Features    string `gorm:"type:text"`        // JSON功能开关
 	CreatedAt   int64  `gorm:"autoCreateTime"`
 	UpdatedAt   int64  `gorm:"autoUpdateTime"`
 }

@@ -79,5 +79,9 @@ func RunAll(db *gorm.DB) error {
 	if err := tenant.MigrateExistingData(db); err != nil {
 		return fmt.Errorf("tenant data migration: %w", err)
 	}
+	// 创建复合索引（幂等）
+	if err := createIndexes(db); err != nil {
+		return fmt.Errorf("create indexes: %w", err)
+	}
 	return nil
 }

@@ -49,4 +49,5 @@ type SecurityConfig struct {
 	AllowedOrigins []string `yaml:"allowed_origins"`
 	TLSEnabled     bool     `yaml:"tls_enabled"`
 	CardEncryptKey string   `yaml:"card_encrypt_key" env:"CARD_ENCRYPT_KEY"` // 32字节hex编码的AES-256密钥
+	CookieSecure   bool     `yaml:"cookie_secure"`                            // Cookie Secure标志（生产环境设为true）
 }

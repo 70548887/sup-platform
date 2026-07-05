@@ -1,0 +1,12 @@
+apiVersion: v2
+name: sup-platform
+description: SUP聚合供货平台 Helm Chart
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - sup
+  - supply-chain
+  - saas
+maintainers:
+  - name: SUP Team

@@ -2,6 +2,7 @@ package tenant
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -130,6 +131,11 @@ func (s *TenantService) RemoveAdmin(ctx context.Context, tenantID, userID uint) 
 	return nil
 }
 
+// ListAdmins 列出租户的所有管理员
+func (s *TenantService) ListAdmins(ctx context.Context, tenantID uint) ([]TenantAdmin, error) {
+	return s.repo.ListAdmins(tenantID)
+}
+
 // CheckAdminPermission 检查管理员权限
 // boss: 全部权限
 // finance: resource包含"billing"/"analytics"/"ledger"/"recharge" → true
@@ -161,6 +167,43 @@ func (s *TenantService) CheckAdminPermission(ctx context.Context, tenantID, user
 	default:
 		return false
 	}
+}
+
+// ToggleFeature 切换租户功能开关
+// 根据 feature 名称在 Tenant.Features JSON 中切换布尔值
+// 首次切换时默认从 false 开启为 true
+func (s *TenantService) ToggleFeature(ctx context.Context, tenantID uint, feature string) (*Tenant, error) {
+	tenant, err := s.repo.GetByID(tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("tenant: get tenant failed: %w", err)
+	}
+
+	features := make(map[string]interface{})
+	if tenant.Features != "" {
+		if err := json.Unmarshal([]byte(tenant.Features), &features); err != nil {
+			return nil, fmt.Errorf("tenant: invalid features json: %w", err)
+		}
+	}
+
+	current := false
+	if v, ok := features[feature]; ok {
+		if b, ok := v.(bool); ok {
+			current = b
+		}
+	}
+	features[feature] = !current
+
+	b, err := json.Marshal(features)
+	if err != nil {
+		return nil, fmt.Errorf("tenant: marshal features failed: %w", err)
+	}
+	tenant.Features = string(b)
+
+	if err := s.repo.UpdateTenant(tenant); err != nil {
+		return nil, fmt.Errorf("tenant: update tenant failed: %w", err)
+	}
+
+	return tenant, nil
 }
 
 // InitDefaultTenant 初始化默认租户

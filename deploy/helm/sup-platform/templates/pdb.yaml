@@ -1,0 +1,14 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "sup-platform.fullname" . }}-api
+  labels:
+    {{- include "sup-platform.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "sup-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+{{- end }}

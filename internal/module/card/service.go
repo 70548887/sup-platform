@@ -9,13 +9,15 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/70548887/sup-platform/internal/pkg/crypto"
+	"github.com/70548887/sup-platform/internal/pkg/queue"
 )
 
 // CardService 卡密服务层
 type CardService struct {
-	repo       *CardRepository
-	db         *gorm.DB
-	encryptKey []byte // AES-GCM 加密密钥（32字节）
+	repo        *CardRepository
+	db          *gorm.DB
+	encryptKey  []byte // AES-GCM 加密密钥（32字节）
+	queueClient *queue.QueueClient
 }
 
 // NewCardService 创建卡密服务实例
@@ -25,6 +27,24 @@ func NewCardService(db *gorm.DB, encryptKey []byte) *CardService {
 		db:         db,
 		encryptKey: encryptKey,
 	}
+}
+
+// SetQueueClient 注入队列客户端
+func (s *CardService) SetQueueClient(client *queue.QueueClient) {
+	s.queueClient = client
+}
+
+// ImportCardsAsync 异步入队卡密导入任务，返回任务ID
+func (s *CardService) ImportCardsAsync(ctx context.Context, goodsID uint, batchName string, contents []string) error {
+	if s.queueClient == nil || !s.queueClient.IsEnabled() {
+		return fmt.Errorf("queue client not available")
+	}
+	payload := queue.CardImportPayload{
+		GoodsID:   goodsID,
+		BatchName: batchName,
+		Contents:  contents,
+	}
+	return s.queueClient.Enqueue(ctx, queue.TypeCardImport, payload)
 }
 
 // ImportCards 批量导入卡密

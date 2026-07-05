@@ -5,16 +5,19 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/70548887/sup-platform/internal/adapter"
 	"github.com/70548887/sup-platform/internal/adapter/yike"
@@ -38,6 +41,7 @@ import (
 	"github.com/70548887/sup-platform/internal/module/refund"
 	"github.com/70548887/sup-platform/internal/module/settlement"
 	"github.com/70548887/sup-platform/internal/module/tenant"
+	"github.com/70548887/sup-platform/internal/pkg/logger"
 	"github.com/70548887/sup-platform/internal/pkg/queue"
 	"github.com/70548887/sup-platform/internal/pkg/ratelimit"
 	pkgtenant "github.com/70548887/sup-platform/internal/pkg/tenant"
@@ -74,7 +78,7 @@ func New() (*App, error) {
 	// 3.6 多租户初始化
 	if cfg.MultiTenant.Enabled {
 		pkgtenant.RegisterTenantScope(db)
-		log.Printf("[INFO] Multi-tenant mode enabled")
+		logger.Default().Info(context.Background(), "multi-tenant mode enabled")
 	}
 
 	// 4. 初始化各Service
@@ -86,12 +90,12 @@ func New() (*App, error) {
 	if cfg.Security.CardEncryptKey != "" {
 		key, err := hex.DecodeString(cfg.Security.CardEncryptKey)
 		if err != nil {
-			log.Printf("[WARN] CARD_ENCRYPT_KEY hex decode failed: %v, card encryption disabled", err)
+			logger.Default().Warn(context.Background(), "CARD_ENCRYPT_KEY hex decode failed, card encryption disabled", "error", err)
 		} else if len(key) != 32 {
-			log.Printf("[WARN] CARD_ENCRYPT_KEY must be 32 bytes (got %d), card encryption disabled", len(key))
+			logger.Default().Warn(context.Background(), "CARD_ENCRYPT_KEY must be 32 bytes, card encryption disabled", "got", len(key))
 		} else {
 			cardEncryptKey = key
-			log.Printf("[INFO] Card content encryption enabled (AES-256-GCM)")
+			logger.Default().Info(context.Background(), "card content encryption enabled", "algorithm", "AES-256-GCM")
 		}
 	}
 
@@ -143,7 +147,7 @@ func New() (*App, error) {
 	if redisClient != nil {
 		ctx := context.Background()
 		if err := rateLimiter.LoadScript(ctx); err != nil {
-			log.Printf("[WARN] Rate limiter script load failed: %v", err)
+			logger.Default().Warn(ctx, "rate limiter script load failed", "error", err)
 		}
 	}
 
@@ -164,9 +168,10 @@ func New() (*App, error) {
 		queueClient = queue.NewQueueClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
 		notifySvc.SetQueueClient(queueClient)
 		dockingSvc.SetQueueClient(queueClient)
-		log.Printf("[INFO] Queue client initialized: %s", cfg.Redis.Addr)
+		cardSvc.SetQueueClient(queueClient)
+		logger.Default().Info(context.Background(), "queue client initialized", "addr", cfg.Redis.Addr)
 	} else {
-		log.Printf("[WARN] Queue client disabled: Redis not available")
+		logger.Default().Warn(context.Background(), "queue client disabled: Redis not available")
 	}
 
 	// 5. 设置路由
@@ -201,11 +206,43 @@ func New() (*App, error) {
 	}, nil
 }
 
-// Run 启动HTTP服务
+// Run 启动HTTP服务（支持优雅关闭）
 func (a *App) Run() error {
 	addr := fmt.Sprintf(":%d", a.Config.App.Port)
-	fmt.Printf("SUP Platform API Server starting on %s\n", addr)
-	return a.Router.Run(addr)
+
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      a.Router,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	// 启动HTTP服务（非阻塞）
+	go func() {
+		logger.Default().Info(context.Background(), "SUP Platform API Server starting", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("[FATAL] HTTP server error: %v", err)
+		}
+	}()
+
+	// 监听系统信号
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Default().Info(context.Background(), "shutting down gracefully")
+
+	// 设置30秒超时进行优雅关闭
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("server forced to shutdown: %w", err)
+	}
+
+	logger.Default().Info(context.Background(), "server exited gracefully")
+	return nil
 }
 
 // loadConfig 从环境变量加载配置
@@ -243,6 +280,7 @@ func loadConfig() *config.Config {
 			AllowedOrigins: strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"), ","),
 			TLSEnabled:     getEnv("TLS_ENABLED", "false") == "true",
 			CardEncryptKey: getEnv("CARD_ENCRYPT_KEY", ""),
+			CookieSecure:   getEnv("COOKIE_SECURE", "false") == "true",
 		},
 	}
 	return cfg
@@ -260,14 +298,22 @@ func connectDB(cfg *config.Config) (*gorm.DB, error) {
 
 	gormCfg := &gorm.Config{}
 	if cfg.App.Mode == "debug" {
-		gormCfg.Logger = logger.Default.LogMode(logger.Info)
+		gormCfg.Logger = gormlogger.Default.LogMode(gormlogger.Info)
 	} else {
-		gormCfg.Logger = logger.Default.LogMode(logger.Warn)
+		gormCfg.Logger = gormlogger.Default.LogMode(gormlogger.Warn)
 	}
 
 	db, err := gorm.Open(mysql.Open(dsn), gormCfg)
 	if err != nil {
 		return nil, err
+	}
+
+	// 配置数据库连接池
+	sqlDB, err := db.DB()
+	if err == nil {
+		sqlDB.SetMaxOpenConns(25)
+		sqlDB.SetMaxIdleConns(5)
+		sqlDB.SetConnMaxLifetime(time.Hour)
 	}
 
 	return db, nil
@@ -276,15 +322,16 @@ func connectDB(cfg *config.Config) (*gorm.DB, error) {
 // connectRedis 连接Redis，失败返回nil（降级模式）
 func connectRedis(cfg *config.Config) *redis.Client {
 	if !cfg.Redis.Enabled {
-		log.Printf("[WARN] Redis is disabled, running in degraded mode")
+		logger.Default().Warn(context.Background(), "Redis is disabled, running in degraded mode")
 		return nil
 	}
 	client := redis.NewClient(&redis.Options{
 		Addr:         cfg.Redis.Addr,
 		Password:     cfg.Redis.Password,
 		DB:           cfg.Redis.DB,
-		PoolSize:     50,
-		MinIdleConns: 10,
+		PoolSize:     200,
+		MinIdleConns: 50,
+		PoolTimeout:  30 * time.Second,
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
@@ -292,10 +339,10 @@ func connectRedis(cfg *config.Config) *redis.Client {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
-		log.Printf("[WARN] Redis connection failed: %v, running in degraded mode", err)
+		logger.Default().Warn(context.Background(), "Redis connection failed, running in degraded mode", "error", err)
 		return nil
 	}
-	log.Printf("[INFO] Redis connected successfully: %s", cfg.Redis.Addr)
+	logger.Default().Info(context.Background(), "Redis connected successfully", "addr", cfg.Redis.Addr)
 	return client
 }
 

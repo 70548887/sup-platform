@@ -81,3 +81,46 @@ func (r *AuditRepository) GetByID(ctx context.Context, id uint) (*AuditLog, erro
 	}
 	return &log, nil
 }
+
+// Stats 获取审计统计信息（总数、按操作类型/资源类型分组计数）
+func (r *AuditRepository) Stats(ctx context.Context) (*AuditStats, error) {
+	stats := &AuditStats{
+		ByAction:   make(map[string]int64),
+		ByResource: make(map[string]int64),
+	}
+
+	// 总数
+	if err := r.db.WithContext(ctx).Model(&AuditLog{}).Count(&stats.Total).Error; err != nil {
+		return nil, err
+	}
+
+	// 按操作类型统计
+	type groupCount struct {
+		Key   string
+		Count int64
+	}
+	var actionCounts []groupCount
+	if err := r.db.WithContext(ctx).Model(&AuditLog{}).
+		Select("action as key, count(*) as count").
+		Group("action").
+		Scan(&actionCounts).Error; err != nil {
+		return nil, err
+	}
+	for _, ac := range actionCounts {
+		stats.ByAction[ac.Key] = ac.Count
+	}
+
+	// 按资源类型统计
+	var resourceCounts []groupCount
+	if err := r.db.WithContext(ctx).Model(&AuditLog{}).
+		Select("resource as key, count(*) as count").
+		Group("resource").
+		Scan(&resourceCounts).Error; err != nil {
+		return nil, err
+	}
+	for _, rc := range resourceCounts {
+		stats.ByResource[rc.Key] = rc.Count
+	}
+
+	return stats, nil
+}

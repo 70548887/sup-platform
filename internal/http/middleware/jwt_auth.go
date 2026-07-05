@@ -17,31 +17,16 @@ const (
 // JWTAuth JWT认证中间件
 // 用于管理后台和供货商后台
 // 验证流程：
-// 1. 从Header Authorization: Bearer <token> 提取token
+// 1. 从Header Authorization: Bearer <token> 或 Cookie auth_token 提取token
 // 2. 验证JWT签名和过期时间
 // 3. 提取UserID和Role
 // 4. 注入gin.Context
 func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. 从Header提取token
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			response.AuthError(c, "缺少Authorization Header")
-			c.Abort()
-			return
-		}
-
-		// 检查Bearer前缀
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			response.AuthError(c, "Authorization格式错误，应为: Bearer <token>")
-			c.Abort()
-			return
-		}
-
-		tokenString := strings.TrimSpace(parts[1])
+		// 1. 从Header或Cookie提取token
+		tokenString := extractToken(c)
 		if tokenString == "" {
-			response.AuthError(c, "token不能为空")
+			response.AuthError(c, "缺少认证凭证")
 			c.Abort()
 			return
 		}
@@ -67,24 +52,10 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 // 只允许指定角色访问
 func JWTAuthWithRole(authService *auth.AuthService, allowedRoles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 先执行JWT认证
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			response.AuthError(c, "缺少Authorization Header")
-			c.Abort()
-			return
-		}
-
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			response.AuthError(c, "Authorization格式错误，应为: Bearer <token>")
-			c.Abort()
-			return
-		}
-
-		tokenString := strings.TrimSpace(parts[1])
+		// 从Header或Cookie提取token
+		tokenString := extractToken(c)
 		if tokenString == "" {
-			response.AuthError(c, "token不能为空")
+			response.AuthError(c, "缺少认证凭证")
 			c.Abort()
 			return
 		}
@@ -116,6 +87,28 @@ func JWTAuthWithRole(authService *auth.AuthService, allowedRoles ...string) gin.
 
 		c.Next()
 	}
+}
+
+// extractToken 从Header或Cookie中提取token
+// 优先级：Authorization Header > auth_token Cookie
+func extractToken(c *gin.Context) string {
+	// 优先从Authorization Header提取
+	authHeader := c.GetHeader("Authorization")
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			if token := strings.TrimSpace(parts[1]); token != "" {
+				return token
+			}
+		}
+	}
+
+	// 回退：从Cookie提取
+	if token, err := c.Cookie("auth_token"); err == nil && token != "" {
+		return token
+	}
+
+	return ""
 }
 
 // GetRoleFromContext 从Context获取Role

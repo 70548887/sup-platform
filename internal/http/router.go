@@ -1,6 +1,9 @@
 package http
 
 import (
+	"net/http"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	swaggerFiles "github.com/swaggo/files"
@@ -78,13 +81,44 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	// 审计中间件：记录所有写操作(POST/PUT/DELETE/PATCH)
 	r.Use(audit.AuditMiddleware(deps.AuditSvc))
 
-	// 健康检查
+	// 健康检查 - liveness probe（轻量级）
 	r.GET("/health", func(c *gin.Context) {
-		response.Success(c, gin.H{"status": "ok"})
+		c.JSON(200, gin.H{"status": "ok", "time": time.Now().Unix()})
+	})
+
+	// 就绪检查 - readiness probe（检测依赖服务）
+	r.GET("/readiness", func(c *gin.Context) {
+		health := gin.H{"status": "ready", "db": "down", "redis": "down", "time": time.Now().Unix()}
+
+		// 检查数据库
+		if sqlDB, err := deps.DB.DB(); err == nil {
+			if err := sqlDB.Ping(); err == nil {
+				health["db"] = "up"
+			}
+		}
+
+		// 检查 Redis
+		if deps.RedisClient != nil {
+			if err := deps.RedisClient.Ping(c).Err(); err == nil {
+				health["redis"] = "up"
+			}
+		}
+
+		if health["db"] == "up" {
+			c.JSON(200, health)
+		} else {
+			c.JSON(503, health)
+		}
 	})
 
 	// Swagger API文档
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// 公开认证路由（无需JWT）
+	authGroup := r.Group("/auth")
+	{
+		authGroup.POST("/login", handleLogin(deps.AuthSvc, deps.Config))
+	}
 
 	// Legacy OpenAPI路由组（应用签名认证中间件）
 	legacyAuth := middleware.LegacyAuth(deps.DB, &middleware.LegacyAuthConfig{
@@ -95,7 +129,7 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	customerGroup := r.Group("/openapi/customer")
 	customerGroup.Use(middleware.TenantContextMiddleware(deps.Config))
 	customerGroup.Use(legacyAuth)
-	customerGroup.Use(middleware.RateLimitMiddleware(deps.RateLimiter, deps.DB))
+	customerGroup.Use(middleware.RateLimitMiddleware(deps.RateLimiter, deps.DB, deps.RedisClient))
 	if deps.MultiTenantEnabled {
 		customerGroup.Use(middleware.QuotaCheckMiddleware(deps.BillingSvc, deps.MultiTenantEnabled))
 	}
@@ -121,7 +155,7 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	supplierGroup := r.Group("/openapi/supplier")
 	supplierGroup.Use(middleware.TenantContextMiddleware(deps.Config))
 	supplierGroup.Use(legacyAuth)
-	supplierGroup.Use(middleware.RateLimitMiddleware(deps.RateLimiter, deps.DB))
+	supplierGroup.Use(middleware.RateLimitMiddleware(deps.RateLimiter, deps.DB, deps.RedisClient))
 	if deps.MultiTenantEnabled {
 		supplierGroup.Use(middleware.QuotaCheckMiddleware(deps.BillingSvc, deps.MultiTenantEnabled))
 	}
@@ -144,6 +178,7 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 
 	// Admin管理API（JWT认证 + role=admin校验）
 	adminGroup := r.Group("/admin")
+	adminGroup.Use(middleware.CSRFProtection())
 	adminGroup.Use(middleware.JWTAuthWithRole(deps.AuthSvc, "admin"))
 	{
 		adminHandler := &admin.Handler{
@@ -250,6 +285,7 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	// 租户管理后台（仅多租户模式启用）
 	if deps.MultiTenantEnabled {
 		tenantAdminGroup := r.Group("/tenant-admin")
+		tenantAdminGroup.Use(middleware.CSRFProtection())
 		tenantAdminGroup.Use(middleware.JWTAuth(deps.AuthSvc))
 		tenantAdminGroup.Use(middleware.TenantContextMiddleware(deps.Config))
 		tenantAdminGroup.Use(middleware.TenantRBACMiddleware(deps.TenantSvc))
@@ -279,4 +315,43 @@ func SetupRouter(deps RouterDeps) *gin.Engine {
 	}
 
 	return r
+}
+
+// handleLogin 登录Handler，验证用户名密码并通过Cookie+JSON双模式返回token
+func handleLogin(authSvc *auth.AuthService, cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			Username string `json:"username" binding:"required"`
+			Password string `json:"password" binding:"required"`
+			Role     string `json:"role" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.ParamError(c, "", "请求参数格式错误")
+			return
+		}
+
+		// 调用AuthService登录
+		token, err := authSvc.Login(req.Username, req.Password, req.Role)
+		if err != nil {
+			response.Error(c, err.Error())
+			return
+		}
+
+		// 通过HttpOnly Cookie设置token
+		c.SetSameSite(http.SameSiteStrictMode)
+		c.SetCookie(
+			"auth_token",          // name
+			token,                 // value
+			3600*72,               // maxAge: 72小时
+			"/",                   // path
+			"",                    // domain (空=当前域名)
+			cfg.Security.CookieSecure, // secure (生产环境设为true)
+			true,                  // httpOnly
+		)
+
+		// 同时在JSON中返回token（兼容API调用方式）
+		response.Success(c, gin.H{
+			"token": token,
+		})
+	}
 }

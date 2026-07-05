@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sup-platform.fullname" . }}-config
+  labels:
+    {{- include "sup-platform.labels" . | nindent 4 }}
+data:
+  APP_NAME: {{ .Values.config.appName | quote }}
+  APP_PORT: {{ .Values.config.appPort | quote }}
+  APP_MODE: {{ .Values.config.appMode | quote }}
+  DB_HOST: {{ .Values.config.dbHost | quote }}
+  DB_PORT: {{ .Values.config.dbPort | quote }}
+  DB_USER: {{ .Values.config.dbUser | quote }}
+  DB_NAME: {{ .Values.config.dbName | quote }}
+  REDIS_ADDR: {{ .Values.config.redisAddr | quote }}
+  REDIS_DB: {{ .Values.config.redisDB | quote }}
+  REDIS_ENABLED: {{ .Values.config.redisEnabled | quote }}
+  REDIS_PREFIX: {{ .Values.config.redisPrefix | quote }}
+  JWT_EXPIRE: {{ .Values.config.jwtExpire | quote }}
+  MULTI_TENANT_ENABLED: {{ .Values.config.multiTenantEnabled | quote }}
+  DEFAULT_TENANT_ID: {{ .Values.config.defaultTenantId | quote }}
